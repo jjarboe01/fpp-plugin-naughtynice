@@ -20,6 +20,7 @@ LightShow-NaughtyNice for the FPP 6.x-assumption bugs these fixed):
 import io
 import logging
 import os
+import time
 from typing import Optional
 
 import requests
@@ -73,12 +74,22 @@ class FPPClient:
         self.timeout = timeout
 
     def is_alive(self) -> bool:
+        return self._fetch_status() is not None
+
+    def _fetch_status(self) -> Optional[dict]:
+        """GET /api/system/status — NOT /api/status, which 404s on FPP 9.x
+        (confirmed against a live 9.5.3 box; that older path is a Limonade
+        route that no longer exists). Shared by is_alive() and
+        break_in_and_sync()'s polling loop."""
         try:
-            r = requests.get(f"{self.base_url}/api/status", timeout=self.timeout)
-            return r.status_code == 200
-        except requests.RequestException as exc:
-            log.warning("FPP health check failed: %s", exc)
-            return False
+            r = requests.get(f"{self.base_url}/api/system/status", timeout=self.timeout)
+            if r.status_code == 200:
+                return r.json()
+            log.warning("FPP status check -> HTTP %s", r.status_code)
+            return None
+        except (requests.RequestException, ValueError) as exc:
+            log.warning("FPP status check failed: %s", exc)
+            return None
 
     def break_in_playlist(self, name: Optional[str] = None) -> bool:
         """GET /api/playlist/{name}/start — SINGULAR. Breaks in from whatever
@@ -95,6 +106,52 @@ class FPPClient:
         except requests.RequestException as exc:
             log.error("break_in_playlist exception: %s", exc)
             return False
+
+    def break_in_and_sync(self, name: Optional[str] = None, timeout: float = 5.0,
+                           poll_interval: float = 0.25) -> bool:
+        """Break into `name` (or self.playlist) and block until FPP confirms
+        the playlist is actually the active one before returning.
+
+        Why this exists: break_in_playlist() only confirms fppd *accepted*
+        the start command over HTTP -- it does not mean the matrix is
+        actually outputting that content yet. fppd needs a beat to stop
+        whatever was running and load the new playlist/media, and that gap
+        was measurably a couple of seconds on the real Pi 5. Meanwhile
+        push_ticker_text() is an "Overlay Model Effect" command applied on
+        a separate render path (TickerZone), which takes effect essentially
+        immediately. Calling the two back-to-back without this wait meant
+        the ticker text started scrolling visibly before the photo/
+        background playlist appeared -- reported by Joe as "text scrolling
+        started before the rest of the screen rendered by a few seconds."
+
+        Polls GET /api/system/status (see _fetch_status) and watches its
+        "playlist" field for the target name -- confirmed via a live status
+        dump that this field is empty when no playlist is the active
+        selection and becomes the playlist's name once fppd has actually
+        switched to it. If FPP never reports the switch within `timeout`,
+        logs a warning and returns True anyway (the break-in call itself
+        succeeded, so we don't want a flaky status poll to nack an
+        otherwise-working submission) -- worst case, sync degrades back to
+        the old race instead of the item failing outright.
+        """
+        target = name or self.playlist
+        if not self.break_in_playlist(target):
+            return False
+
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            status = self._fetch_status()
+            if status is not None and status.get("playlist") == target:
+                log.info("Confirmed FPP switched to playlist %s before signaling ticker", target)
+                return True
+            time.sleep(poll_interval)
+
+        log.warning(
+            "break_in_and_sync: FPP never reported playlist=%s as active within %.1fs -- "
+            "proceeding anyway, ticker text may start slightly ahead of the visual",
+            target, timeout,
+        )
+        return True
 
     def push_photo_overlay(self, photo: Image.Image, child_name: str, status: str) -> bool:
         """Composite photo onto a matrix_width x matrix_width canvas with
