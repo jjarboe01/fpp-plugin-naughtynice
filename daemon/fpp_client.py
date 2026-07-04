@@ -209,7 +209,7 @@ class FPPClient:
         """FPP 9.x command API: args MUST be an array, not a dict."""
         label = status.upper()
         color = "#00FF00" if status == "nice" else "#FF0000"
-        message = f"  BREAKING: {child_name} is on the {label} LIST!  "
+        message = f"  BREAKING: {child_name} is on Santa's {label} LIST!  "
 
         payload = {
             "command": "Overlay Model Effect",
