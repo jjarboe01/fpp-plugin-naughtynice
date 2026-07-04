@@ -24,6 +24,31 @@ Then go to **Content Setup -> NaughtyNice Cloud - Setup**, paste in your
 show token (from the naughtynice-cloud dashboard) and the cloud service
 URL, and save.
 
+## Dev/prod environment toggle
+
+The setup page has two credential slots — **Production** and
+**Development** — each with its own cloud service URL and show token,
+defaulted to `https://naughtynicefpp.com` and `https://dev.naughtynicefpp.com`.
+A radio button picks which one the daemon actually polls (`environment` in
+`config/settings.json`). Both slots are always saved, so flipping back and
+forth for plugin/server testing never requires re-pasting a token. Both
+the setup page and the status page show a colored **ACTIVE ENVIRONMENT**
+banner (green prod, orange dev) so it's obvious at a glance which one is
+live — important since the Pi only runs one daemon and one FSEQ/matrix, so
+"dev" and "prod" are a config toggle on the same hardware, not separate
+boxes.
+
+Settings files created before this feature (flat `cloud_base_url`/`token`,
+no `environments` key) are migrated automatically into the `prod` slot the
+first time either `content.php` or the daemon loads them — no manual
+migration needed.
+
+**This toggle is manual/human-operated only.** Which environment is active
+should only ever change because Joe clicked the radio button on the setup
+page — not as a side effect of unrelated code changes, deploys, or
+automated edits. If you're working on something else in this plugin,
+leave `environment` alone.
+
 ## How it works
 
 - `scripts/postStart.sh` launches `daemon/nnl_daemon.py` as a detached

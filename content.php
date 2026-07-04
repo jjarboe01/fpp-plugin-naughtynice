@@ -8,8 +8,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $nnlSettings = nnl_load_settings();
 
     if (isset($_POST['nnl_action']) && $_POST['nnl_action'] === 'save') {
-        $nnlSettings['token'] = trim($_POST['token']);
-        $nnlSettings['cloud_base_url'] = rtrim(trim($_POST['cloud_base_url']), '/');
+        $postedEnv = isset($_POST['environment']) ? $_POST['environment'] : 'prod';
+        $nnlSettings['environment'] = in_array($postedEnv, NNL_ENVIRONMENT_NAMES, true) ? $postedEnv : 'prod';
+
+        foreach (NNL_ENVIRONMENT_NAMES as $envName) {
+            $urlField = $envName . '_cloud_base_url';
+            $tokenField = $envName . '_token';
+            $nnlSettings['environments'][$envName]['cloud_base_url'] = rtrim(trim($_POST[$urlField] ?? ''), '/');
+            $nnlSettings['environments'][$envName]['token'] = trim($_POST[$tokenField] ?? '');
+        }
+
         $nnlSettings['fpp_base_url'] = rtrim(trim($_POST['fpp_base_url']), '/');
         $nnlSettings['poll_interval_seconds'] = max(5, intval($_POST['poll_interval_seconds']));
         $nnlSettings['playlist'] = trim($_POST['playlist']);
@@ -30,6 +38,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $nnlSettings = nnl_load_settings();
 $nnlStatus = nnl_read_status();
+$nnlActive = nnl_active_env($nnlSettings);
 $actionUrl = htmlspecialchars($_SERVER['REQUEST_URI']);
 ?>
 <style>
@@ -42,10 +51,25 @@ $actionUrl = htmlspecialchars($_SERVER['REQUEST_URI']);
   .nnl-ok { background: #e2f7e2; color: #1a5d1a; }
   .nnl-error { background: #fde2e2; color: #8a1c1c; }
   .nnl-status-table td { padding: 2px 10px 2px 0; }
+  .nnl-env-banner {
+    display: inline-block; padding: 4px 12px; border-radius: 4px; font-weight: bold;
+    margin-bottom: 10px; letter-spacing: 0.5px;
+  }
+  .nnl-env-banner.nnl-env-prod { background: #1a5d1a; color: #fff; }
+  .nnl-env-banner.nnl-env-dev { background: #b35c00; color: #fff; }
+  .nnl-env-fieldset { border: 1px solid #ccc; margin-top: 12px; padding: 8px 12px 14px; }
+  .nnl-env-fieldset legend { font-weight: bold; padding: 0 6px; }
+  .nnl-env-radio { font-weight: normal; display: inline-block; margin-right: 20px; }
+  .nnl-env-radio input { width: auto; }
 </style>
 
 <div class="nnl-box">
   <h3>NaughtyNice Cloud — Setup</h3>
+
+  <div class="nnl-env-banner nnl-env-<?php echo htmlspecialchars($nnlActive['name']); ?>">
+    ACTIVE ENVIRONMENT: <?php echo htmlspecialchars(strtoupper($nnlActive['name'])); ?>
+    (<?php echo htmlspecialchars($nnlActive['cloud_base_url'] ?: 'no URL set'); ?>)
+  </div>
 
   <?php if ($nnlMessage): ?>
     <div class="nnl-msg <?php echo $nnlMessageClass; ?>"><?php echo htmlspecialchars($nnlMessage); ?></div>
@@ -67,14 +91,34 @@ $actionUrl = htmlspecialchars($_SERVER['REQUEST_URI']);
   <form method="post" action="<?php echo $actionUrl; ?>">
     <input type="hidden" name="nnl_action" value="save">
 
-    <label for="token">Show token</label>
-    <input type="password" id="token" name="token" value="<?php echo htmlspecialchars($nnlSettings['token']); ?>"
-           placeholder="nnl_..." autocomplete="off">
-    <small>From your NaughtyNice Cloud dashboard, under the show's "Regenerate plugin token" action.</small>
+    <fieldset class="nnl-env-fieldset">
+      <legend>Environment</legend>
+      <label class="nnl-env-radio">
+        <input type="radio" name="environment" value="prod" <?php echo $nnlSettings['environment'] === 'prod' ? 'checked' : ''; ?>>
+        Production
+      </label>
+      <label class="nnl-env-radio">
+        <input type="radio" name="environment" value="dev" <?php echo $nnlSettings['environment'] === 'dev' ? 'checked' : ''; ?>>
+        Development
+      </label>
+      <p><small>Picks which environment below the daemon polls. Both sets of credentials are kept — switching back and forth doesn't lose either token.</small></p>
+    </fieldset>
 
-    <label for="cloud_base_url">Cloud service URL</label>
-    <input type="text" id="cloud_base_url" name="cloud_base_url" value="<?php echo htmlspecialchars($nnlSettings['cloud_base_url']); ?>"
-           placeholder="https://your-domain.example.com">
+    <?php foreach (NNL_ENVIRONMENT_NAMES as $envName): $env = $nnlSettings['environments'][$envName]; ?>
+    <fieldset class="nnl-env-fieldset">
+      <legend><?php echo htmlspecialchars(ucfirst($envName)); ?></legend>
+
+      <label for="<?php echo $envName; ?>_cloud_base_url">Cloud service URL</label>
+      <input type="text" id="<?php echo $envName; ?>_cloud_base_url" name="<?php echo $envName; ?>_cloud_base_url"
+             value="<?php echo htmlspecialchars($env['cloud_base_url']); ?>"
+             placeholder="https://your-domain.example.com">
+
+      <label for="<?php echo $envName; ?>_token">Show token</label>
+      <input type="password" id="<?php echo $envName; ?>_token" name="<?php echo $envName; ?>_token"
+             value="<?php echo htmlspecialchars($env['token']); ?>" placeholder="nnl_..." autocomplete="off">
+      <small>From this show's NaughtyNice Cloud dashboard, under "Regenerate plugin token".</small>
+    </fieldset>
+    <?php endforeach; ?>
 
     <label for="fpp_base_url">Local FPP API URL</label>
     <input type="text" id="fpp_base_url" name="fpp_base_url" value="<?php echo htmlspecialchars($nnlSettings['fpp_base_url']); ?>">
@@ -105,6 +149,6 @@ $actionUrl = htmlspecialchars($_SERVER['REQUEST_URI']);
 
   <form method="post" action="<?php echo $actionUrl; ?>">
     <input type="hidden" name="nnl_action" value="test">
-    <button type="submit">Test connection to cloud</button>
+    <button type="submit">Test connection to active environment (<?php echo htmlspecialchars(strtoupper($nnlActive['name'])); ?>)</button>
   </form>
 </div>
