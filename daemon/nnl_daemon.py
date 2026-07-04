@@ -52,18 +52,25 @@ def _interruptible_sleep(seconds: float) -> None:
         time.sleep(min(1.0, end - time.monotonic()))
 
 
-def _process_item(cloud: CloudClient, fpp: FPPClient, item: dict, matrix_width: int, photo_zone_height: int) -> None:
+def _process_item(cloud: CloudClient, fpp: FPPClient, item: dict, matrix_width: int, photo_zone_height: int, plan: str = "full") -> None:
     submission_id = item["id"]
     try:
-        photo_bytes = None
-        if item.get("photo_url"):
-            photo_bytes = cloud.fetch_photo(item["photo_url"])
+        if plan == "text_only":
+            # No photo zone to render into — just break in and scroll the
+            # ticker text. Skips photo download/compositing/upload entirely
+            # so text-only shows have no dependency on a PhotoZone model.
+            ok = fpp.break_in_playlist()
+            ok = ok and fpp.push_ticker_text(item["child_name"], item["verdict"])
+        else:
+            photo_bytes = None
+            if item.get("photo_url"):
+                photo_bytes = cloud.fetch_photo(item["photo_url"])
 
-        display_img = prepare_display_image(photo_bytes, item["gender"], matrix_width, photo_zone_height)
+            display_img = prepare_display_image(photo_bytes, item.get("gender"), matrix_width, photo_zone_height)
 
-        ok = fpp.push_photo_overlay(display_img, item["child_name"], item["verdict"])
-        ok = ok and fpp.break_in_playlist()
-        ok = ok and fpp.push_ticker_text(item["child_name"], item["verdict"])
+            ok = fpp.push_photo_overlay(display_img, item["child_name"], item["verdict"])
+            ok = ok and fpp.break_in_playlist()
+            ok = ok and fpp.push_ticker_text(item["child_name"], item["verdict"])
 
         if ok:
             cloud.ack(submission_id)
@@ -141,8 +148,10 @@ def run() -> None:
             _interruptible_sleep(max(settings.poll_interval_seconds, 5))
             continue
 
+        plan = queue.get("show", {}).get("plan", "full")
+
         for item in queue.get("items", []):
-            _process_item(cloud, fpp, item, settings.matrix_width, settings.photo_zone_height)
+            _process_item(cloud, fpp, item, settings.matrix_width, settings.photo_zone_height, plan=plan)
             items_processed_total += 1
 
         cloud.telemetry(PLUGIN_VERSION, fpp_version=None)
@@ -150,6 +159,7 @@ def run() -> None:
         write_status(
             license="active",
             license_expires=license_expires,
+            plan=plan,
             last_poll_at=_now_iso(),
             last_error=None,
             items_processed_total=items_processed_total,

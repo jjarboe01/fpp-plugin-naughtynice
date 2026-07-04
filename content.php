@@ -54,6 +54,7 @@ $actionUrl = htmlspecialchars($_SERVER['REQUEST_URI']);
   <fieldset>
     <legend>Status</legend>
     <table class="nnl-status-table">
+      <tr><td>Plan:</td><td><?php echo htmlspecialchars($nnlStatus['plan'] ?? '—'); ?></td></tr>
       <tr><td>License:</td><td><strong><?php echo htmlspecialchars($nnlStatus['license'] ?? 'unknown — daemon hasn\'t polled yet'); ?></strong></td></tr>
       <tr><td>License expires:</td><td><?php echo htmlspecialchars($nnlStatus['license_expires'] ?? '—'); ?></td></tr>
       <tr><td>Last poll:</td><td><?php echo htmlspecialchars($nnlStatus['last_poll_at'] ?? 'never'); ?></td></tr>
