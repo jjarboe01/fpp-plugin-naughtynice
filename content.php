@@ -26,9 +26,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $nnlSettings['photo_zone_height'] = max(1, intval($_POST['photo_zone_height']));
         $nnlSettings['enabled'] = isset($_POST['enabled']);
 
-        nnl_save_settings($nnlSettings);
-        $nnlMessage = 'Settings saved. The daemon picks up changes on its next poll cycle (no restart needed).';
-        $nnlMessageClass = 'nnl-ok';
+        $saveResult = nnl_save_settings($nnlSettings);
+        if ($saveResult['ok']) {
+            $nnlMessage = 'Settings saved. The daemon picks up changes on its next poll cycle (no restart needed).';
+            $nnlMessageClass = 'nnl-ok';
+        } else {
+            $nnlMessage = $saveResult['message'];
+            $nnlMessageClass = 'nnl-error';
+        }
     } elseif (isset($_POST['nnl_action']) && $_POST['nnl_action'] === 'test') {
         $result = nnl_test_connection($nnlSettings);
         $nnlMessage = $result['message'];

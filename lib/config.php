@@ -95,13 +95,33 @@ function nnl_load_settings() {
     return $settings;
 }
 
+// Returns array('ok' => bool, 'message' => string|null). Callers MUST check
+// 'ok' -- a failed write here used to fail silently (file_put_contents()/
+// rename() return values were ignored), so content.php would show "Settings
+// saved" and re-render defaults on the next load with no indication
+// anything was wrong. That exact bug happened in production: fpp_install.sh
+// runs as root and left config/ root-owned, so php-fpm (running as the fpp
+// user) couldn't write into it at all.
 function nnl_save_settings($settings) {
     if (!is_dir(NNL_CONFIG_DIR)) {
-        mkdir(NNL_CONFIG_DIR, 0755, true);
+        if (!@mkdir(NNL_CONFIG_DIR, 0755, true) && !is_dir(NNL_CONFIG_DIR)) {
+            return array('ok' => false, 'message' => "Could not create config directory (" . NNL_CONFIG_DIR . "). Check permissions.");
+        }
     }
+    if (!is_writable(NNL_CONFIG_DIR)) {
+        return array('ok' => false, 'message' => "Config directory (" . NNL_CONFIG_DIR . ") is not writable by the web server user. " .
+            "This usually means a plugin lifecycle script ran as root and left it root-owned -- run: " .
+            "sudo chown -R fpp:fpp " . NNL_CONFIG_DIR);
+    }
+
     $tmp = NNL_SETTINGS_PATH . '.tmp';
-    file_put_contents($tmp, json_encode($settings, JSON_PRETTY_PRINT));
-    rename($tmp, NNL_SETTINGS_PATH);
+    if (@file_put_contents($tmp, json_encode($settings, JSON_PRETTY_PRINT)) === false) {
+        return array('ok' => false, 'message' => "Failed to write settings to $tmp. Check disk space and permissions.");
+    }
+    if (!@rename($tmp, NNL_SETTINGS_PATH)) {
+        return array('ok' => false, 'message' => "Failed to move settings into place at " . NNL_SETTINGS_PATH . ".");
+    }
+    return array('ok' => true, 'message' => null);
 }
 
 function nnl_read_status() {
