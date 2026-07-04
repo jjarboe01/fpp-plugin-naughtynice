@@ -1,0 +1,23 @@
+{
+	"repoName": "fpp-plugin-naughtynice",
+	"name": "NaughtyNice Cloud",
+	"author": "Joseph Jarboe (jjarboe01)",
+	"description": "Connects FPP to the NaughtyNice Cloud service. Outbound-only polling - no inbound firewall rules needed.",
+	"homeURL": "https://github.com/jjarboe01/fpp-plugin-naughtynice",
+	"srcURL": "https://github.com/jjarboe01/fpp-plugin-naughtynice.git",
+	"bugURL": "https://github.com/jjarboe01/fpp-plugin-naughtynice/issues",
+	"allowUpdates": 1,
+	"versions": [
+		{
+			"minFPPVersion": "6.0",
+			"maxFPPVersion": "0",
+			"branch": "main",
+			"sha": "",
+			"dependencies": {
+				"plugins": [],
+				"packages": [],
+				"scripts": []
+			}
+		}
+	]
+}
