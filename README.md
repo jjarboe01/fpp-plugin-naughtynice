@@ -16,9 +16,19 @@ it on a live show.
 
 ## Install (once published / added as a plugin source)
 
-FPP UI -> Content Setup -> Plugin Manager -> install by URL:
+FPP UI -> Content Setup -> Plugin Manager. The "Get Plugin Info" box wants
+a URL to **pluginInfo.json itself**, not the repo's `.git` clone URL —
+paste this exactly:
 
-    https://github.com/jjarboe01/fpp-plugin-naughtynice.git
+    https://raw.githubusercontent.com/jjarboe01/fpp-plugin-naughtynice/main/pluginInfo.json
+
+(Pasting the plain `https://github.com/.../fpp-plugin-naughtynice.git` URL
+does not work — FPP's `ManualLoadInfo()` in `plugins.php` only swaps the
+`github.com` host for `raw.githubusercontent.com`, it doesn't append the
+branch or filename, so the fetch 404s. A bug in that same function's error
+handler then throws before its `alert()` runs, so the "Get Plugin Info"
+button silently does nothing instead of showing an error — always use the
+raw pluginInfo.json URL above.)
 
 Then go to **Content Setup -> NaughtyNice Cloud - Setup**, paste in your
 show token (from the naughtynice-cloud dashboard) and the cloud service
@@ -88,6 +98,26 @@ leave `environment` alone.
       fpp_install.sh / fpp_uninstall.sh
       preStart.sh / postStart.sh / postStop.sh / preStop.sh
       _lib.sh          shared PID-file helpers
+
+## Compared against fpp-plugin-Template
+
+Checked 2026-07-04 against
+[FalconChristmas/fpp-plugin-Template](https://github.com/FalconChristmas/fpp-plugin-Template).
+Everything required is present (`pluginInfo.json`, `menu.inc`, `status.php`,
+`content.php`, `about.php`, the `scripts/` lifecycle hooks, and
+`fpp_install.sh`/`fpp_uninstall.sh`). The template's other files are
+optional hooks this plugin doesn't need and deliberately omits:
+
+- `api.php` — lets a plugin add custom `/api/plugin/<name>/*` REST
+  endpoints. Not needed; `content.php`'s settings form does a plain POST
+  and reloads, no AJAX API required.
+- `output.php` — an Output Setup menu page for configuring show outputs
+  (channels/controllers). Not applicable — this plugin doesn't touch
+  output config.
+- `commands/` (`descriptions.json` + `on.sh`/`off.sh`) — registers custom
+  actions in FPP's Commands list (schedulable/triggerable independently).
+  Not needed — this plugin has nothing that makes sense as a standalone
+  FPP Command.
 
 ## Testing so far
 
