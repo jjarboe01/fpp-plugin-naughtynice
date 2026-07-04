@@ -34,6 +34,18 @@ Then go to **Content Setup -> NaughtyNice Cloud - Setup**, paste in your
 show token (from the naughtynice-cloud dashboard) and the cloud service
 URL, and save.
 
+**After installing (or updating) the plugin, restart FPPD** (Status/Control
+-> Restart FPPD, or reboot the Pi) so `scripts/postStart.sh` actually
+launches the poll daemon. FPP only runs a plugin's `postStart.sh` when
+`fppd` itself starts — installing a plugin while `fppd` is already running
+does not start its daemon. Until you restart, the setup/status pages will
+correctly show "Test connection" succeeding (that's a live PHP curl call)
+while the **Status** panel stays empty/stale, because nothing has ever
+written `config/status.json`. If you don't want to restart the whole show
+right away, you can start it manually once over SSH:
+
+    /home/fpp/media/plugins/fpp-plugin-naughtynice/scripts/postStart.sh
+
 ## Dev/prod environment toggle
 
 The setup page has two credential slots — **Production** and
