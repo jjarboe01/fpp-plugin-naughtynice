@@ -37,8 +37,12 @@ SCALAR_DEFAULTS = {
     "poll_interval_seconds": 10,
     "playlist": "breaking_news",
     "ticker_model": "TickerZone",
+    "photo_model": "PhotoZone",
     "matrix_width": 192,
+    "matrix_height": 192,
     "photo_zone_height": 140,
+    "ticker_zone_height": 52,
+    "display_duration_seconds": 20,
     "enabled": True,
 }
 
@@ -55,8 +59,12 @@ class Settings:
     poll_interval_seconds: int = 10
     playlist: str = "breaking_news"
     ticker_model: str = "TickerZone"
+    photo_model: str = "PhotoZone"
     matrix_width: int = 192
+    matrix_height: int = 192
     photo_zone_height: int = 140
+    ticker_zone_height: int = 52
+    display_duration_seconds: int = 20
     enabled: bool = True
 
     @property

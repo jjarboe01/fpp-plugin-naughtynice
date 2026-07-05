@@ -40,8 +40,12 @@ function nnl_default_settings() {
         'poll_interval_seconds' => 10,
         'playlist' => 'breaking_news',
         'ticker_model' => 'TickerZone',
+        'photo_model' => 'PhotoZone',
         'matrix_width' => 192,
+        'matrix_height' => 192,
         'photo_zone_height' => 140,
+        'ticker_zone_height' => 52,
+        'display_duration_seconds' => 20,
         'enabled' => true,
     );
 }
@@ -70,7 +74,8 @@ function nnl_load_settings() {
     }
 
     $scalarKeys = array('environment', 'fpp_base_url', 'poll_interval_seconds', 'playlist',
-                         'ticker_model', 'matrix_width', 'photo_zone_height', 'enabled');
+                         'ticker_model', 'photo_model', 'matrix_width', 'matrix_height',
+                         'photo_zone_height', 'ticker_zone_height', 'display_duration_seconds', 'enabled');
     foreach ($scalarKeys as $key) {
         if (isset($raw[$key])) {
             $settings[$key] = $raw[$key];

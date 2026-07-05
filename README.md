@@ -32,7 +32,9 @@ raw pluginInfo.json URL above.)
 
 Then go to **Content Setup -> NaughtyNice Cloud - Setup**, paste in your
 show token (from the naughtynice-cloud dashboard) and the cloud service
-URL, and save.
+URL, and save. The PhotoZone/TickerZone overlay models and the
+breaking-news playlist are set up for you automatically during install —
+see "Zone auto-provisioning" below.
 
 **After installing (or updating) the plugin, restart FPPD** (Status/Control
 -> Restart FPPD, or reboot the Pi) so `scripts/postStart.sh` actually
@@ -71,6 +73,42 @@ page — not as a side effect of unrelated code changes, deploys, or
 automated edits. If you're working on something else in this plugin,
 leave `environment` alone.
 
+## Zone auto-provisioning
+
+`fpp_install.sh` runs `daemon/fpp_provision.py` once automatically, so the
+plugin is ready to run right after install — no hand-building Pixel Overlay
+Models or a playlist first:
+
+- Finds your existing matrix's channel-output model (the largest-channel
+  "Channel" type model not already named PhotoZone/TickerZone), derives its
+  pixel width/height, and appends two new Pixel Overlay Models —
+  `PhotoZone` and `TickerZone` — right after your existing channels. The
+  photo/ticker split matches phase 1's proven ratio (~73%/27%) scaled to
+  your matrix's actual height.
+- Creates a `breaking_news` playlist with a single **script** entry
+  pointing at `nnl_display_image.py` (deployed to
+  `/home/fpp/media/scripts/` by `fpp_install.sh`). Holds the display for
+  `display_duration_seconds` (default 20s) then hands control back.
+- **Idempotent and safe to re-run** (a "Re-run zone setup" button lives on
+  the setup page): if PhotoZone/TickerZone already exist, their *current*
+  on-FPP size is treated as the source of truth and synced into
+  `settings.json` — so resizing either model by hand in FPP's own editor,
+  then re-running, picks up your change without a code edit. Pass
+  `--force-recreate` (the "Full reset" checkbox on the setup page) to
+  instead delete and rebuild both from freshly detected geometry.
+- The playlist itself is only ever *created* if missing, never overwritten
+  by a re-run — safe to customize (add lead-in content, etc.) as long as
+  the script entry stays.
+
+**Why a script entry and not FPP's native "image" playlist entry type?**
+Tested live against this plugin's own Pi5 dev rig on two different FPP
+9.5.3 builds — the native `"image"` entry hung indefinitely (never
+reported finished), even with a known-good file. A `"script"` entry
+running the same shared-memory-buffer approach as phase 1's
+`show_display_image.py` was confirmed to run to completion reliably on
+the same hardware. Don't switch this back to a native image entry without
+retesting on real hardware first.
+
 ## How it works
 
 - `scripts/postStart.sh` launches `daemon/nnl_daemon.py` as a detached
@@ -106,10 +144,13 @@ leave `environment` alone.
       fpp_client.py    talks to the local FPP REST API (ported from phase-1 fpp_client.py)
       image_processor.py  photo/silhouette compositing (ported from phase-1)
       config.py            settings/status file I/O
+      fpp_provision.py     auto-creates PhotoZone/TickerZone models + playlist (see Zone auto-provisioning above)
     scripts/
       fpp_install.sh / fpp_uninstall.sh
       preStart.sh / postStart.sh / postStop.sh / preStop.sh
       _lib.sh          shared PID-file helpers
+      nnl_display_image.py  deployed to /home/fpp/media/scripts/ — the playlist script entry that
+                             writes each submission's composited photo into PhotoZone's overlay buffer
 
 ## Compared against fpp-plugin-Template
 

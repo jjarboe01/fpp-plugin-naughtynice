@@ -38,6 +38,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $result = nnl_test_connection($nnlSettings);
         $nnlMessage = $result['message'];
         $nnlMessageClass = $result['ok'] ? 'nnl-ok' : 'nnl-error';
+    } elseif (isset($_POST['nnl_action']) && $_POST['nnl_action'] === 'provision') {
+        // Re-runs the same auto-provisioning fpp_install.sh does on first
+        // install. Default mode syncs settings.json from whatever
+        // PhotoZone/TickerZone currently look like on FPP (so a manual
+        // resize in FPP's own Pixel Overlay Models editor gets picked up).
+        // "Full reset" instead deletes and rebuilds both from freshly
+        // detected matrix geometry.
+        $venvPython = NNL_PLUGIN_DIR . '/venv/bin/python3';
+        $daemonDir = NNL_PLUGIN_DIR . '/daemon';
+        if (!is_executable($venvPython)) {
+            $nnlMessage = "Plugin venv not found at $venvPython — reinstall the plugin or install its Python dependencies manually.";
+            $nnlMessageClass = 'nnl-error';
+        } else {
+            $forceFlag = isset($_POST['force_recreate']) ? ' --force-recreate' : '';
+            $cmd = 'cd ' . escapeshellarg($daemonDir) . ' && ' .
+                   escapeshellarg($venvPython) . ' fpp_provision.py' . $forceFlag . ' 2>&1';
+            shell_exec($cmd);
+
+            $status = nnl_read_status();
+            $lastProvision = isset($status['last_provision']) ? $status['last_provision'] : null;
+            if ($lastProvision && !empty($lastProvision['ok'])) {
+                $nnlMessage = $lastProvision['message'];
+                $nnlMessageClass = 'nnl-ok';
+            } else {
+                $nnlMessage = $lastProvision && isset($lastProvision['message'])
+                    ? $lastProvision['message']
+                    : 'Zone setup did not report a result — check the plugin log.';
+                $nnlMessageClass = 'nnl-error';
+            }
+        }
     }
 }
 
@@ -93,6 +123,34 @@ $actionUrl = htmlspecialchars($_SERVER['REQUEST_URI']);
     </table>
   </fieldset>
 
+  <fieldset>
+    <legend>Zone setup</legend>
+    <table class="nnl-status-table">
+      <tr><td>Matrix size:</td><td><?php echo htmlspecialchars($nnlSettings['matrix_width']); ?> x <?php echo htmlspecialchars($nnlSettings['matrix_height']); ?> px</td></tr>
+      <tr><td>Photo zone:</td><td><?php echo htmlspecialchars($nnlSettings['photo_model']); ?> — <?php echo htmlspecialchars($nnlSettings['matrix_width']); ?> x <?php echo htmlspecialchars($nnlSettings['photo_zone_height']); ?> px</td></tr>
+      <tr><td>Ticker zone:</td><td><?php echo htmlspecialchars($nnlSettings['ticker_model']); ?> — <?php echo htmlspecialchars($nnlSettings['matrix_width']); ?> x <?php echo htmlspecialchars($nnlSettings['ticker_zone_height']); ?> px</td></tr>
+      <tr><td>Playlist:</td><td><?php echo htmlspecialchars($nnlSettings['playlist']); ?></td></tr>
+      <tr><td>Display hold time:</td><td><?php echo htmlspecialchars($nnlSettings['display_duration_seconds']); ?> seconds</td></tr>
+    </table>
+    <p><small>These were auto-detected from your existing channel outputs and set up automatically —
+      the plugin should already be ready to run without touching anything below.</small></p>
+    <p><small><strong>Want a different split</strong> (e.g. more room for the ticker, or the numbers above
+      don't look right)? Two options: (1) resize the <code><?php echo htmlspecialchars($nnlSettings['photo_model']); ?></code>
+      and <code><?php echo htmlspecialchars($nnlSettings['ticker_model']); ?></code> models yourself under
+      <strong>Content Setup &rarr; Pixel Overlay Models</strong>, then click "Re-run zone setup" below (without
+      Full reset) to pull your new sizes into the plugin — nothing gets overwritten. Or (2) if you've changed
+      your actual matrix/channel output, check "Full reset" and re-run to rebuild both zones from scratch based
+      on your current channel outputs.</small></p>
+
+    <form method="post" action="<?php echo $actionUrl; ?>" style="display:inline;">
+      <input type="hidden" name="nnl_action" value="provision">
+      <label style="display:inline; font-weight:normal;">
+        <input type="checkbox" name="force_recreate" style="width:auto;"> Full reset (delete &amp; rebuild both zones from scratch)
+      </label>
+      <p><button type="submit">Re-run zone setup</button></p>
+    </form>
+  </fieldset>
+
   <form method="post" action="<?php echo $actionUrl; ?>">
     <input type="hidden" name="nnl_action" value="save">
 
@@ -144,6 +202,9 @@ $actionUrl = htmlspecialchars($_SERVER['REQUEST_URI']);
 
     <label for="photo_zone_height">Photo zone height (px)</label>
     <input type="number" id="photo_zone_height" name="photo_zone_height" value="<?php echo htmlspecialchars($nnlSettings['photo_zone_height']); ?>">
+    <small>Auto-managed by "Re-run zone setup" above (see the Zone setup section) — it always overwrites
+      these two fields to match whatever <?php echo htmlspecialchars($nnlSettings['photo_model']); ?>'s actual
+      size is on FPP. Only edit these by hand if you're not using zone auto-setup at all.</small>
 
     <label><input type="checkbox" name="enabled" <?php echo $nnlSettings['enabled'] ? 'checked' : ''; ?>> Enabled</label>
 
