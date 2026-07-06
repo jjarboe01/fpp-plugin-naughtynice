@@ -178,7 +178,19 @@ def _find_main_matrix_model(models: list, exclude_names: set) -> dict:
     """Heuristic: the main display is the largest-channel-count 'Channel'
     type model that isn't one of our own overlay zones. On a dedicated
     single-purpose FPP box (the common case for this plugin) that's
-    reliably the one real matrix output."""
+    reliably the one real matrix output.
+
+    Prefers a real (non-auto-created) model over FPP's own auto-generated
+    channel-output stand-in when both exist and cover the same range —
+    this happens after the 2026-07-06 incident's recovery: the customer
+    re-pushed their real named model ("P5Large") from xLights, but FPP's
+    own auto-recreated bookkeeping model ("P5", autoCreated:true) is still
+    sitting there too, with an identical ChannelCount. Without this tie-
+    break, plain `max()` by ChannelCount would silently depend on
+    dict/list ordering to decide which one "wins" — fragile. autoCreated
+    models are always deprioritized so zones get sized off the customer's
+    actual model.
+    """
     candidates = [
         m for m in models
         if m.get("Type") == "Channel" and m.get("Name") not in exclude_names
@@ -186,7 +198,7 @@ def _find_main_matrix_model(models: list, exclude_names: set) -> dict:
     ]
     if not candidates:
         return {}
-    return max(candidates, key=lambda m: m.get("ChannelCount", 0))
+    return max(candidates, key=lambda m: (not m.get("autoCreated", False), m.get("ChannelCount", 0)))
 
 
 def _next_start_channel(models: list) -> int:
