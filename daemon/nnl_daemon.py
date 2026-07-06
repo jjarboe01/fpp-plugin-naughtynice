@@ -30,7 +30,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("nnl_daemon")
 
-PLUGIN_VERSION = "0.3.2"
+PLUGIN_VERSION = "0.3.3"
 MAX_BACKOFF_SECONDS = 300
 
 _stop = False
@@ -159,7 +159,8 @@ def run() -> None:
             _process_item(cloud, fpp, item, settings.matrix_width, settings.photo_zone_height, plan=plan)
             items_processed_total += 1
 
-        cloud.telemetry(PLUGIN_VERSION, fpp_version=None)
+        fpp_version = fpp.get_fpp_version()
+        cloud.telemetry(PLUGIN_VERSION, fpp_version=fpp_version)
 
         write_status(
             license="active",
@@ -169,6 +170,7 @@ def run() -> None:
             last_error=None,
             items_processed_total=items_processed_total,
             plugin_version=PLUGIN_VERSION,
+            fpp_version=fpp_version,
         )
 
         _interruptible_sleep(max(settings.poll_interval_seconds, 5))

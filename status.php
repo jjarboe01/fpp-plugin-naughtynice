@@ -28,6 +28,7 @@ $nnlActive = nnl_active_env($nnlSettings);
     <tr><td>Submissions delivered (total):</td><td><?php echo htmlspecialchars($nnlStatus['items_processed_total'] ?? 0); ?></td></tr>
     <tr><td>Last error:</td><td><?php echo htmlspecialchars($nnlStatus['last_error'] ?? '—'); ?></td></tr>
     <tr><td>Plugin version:</td><td><?php echo htmlspecialchars($nnlStatus['plugin_version'] ?? '—'); ?></td></tr>
+    <tr><td>FPP version:</td><td><?php echo htmlspecialchars($nnlStatus['fpp_version'] ?? '—'); ?></td></tr>
   </table>
   <p><a href="plugin.php?plugin=fpp-plugin-naughtynice&page=content.php">Go to setup page</a></p>
 </div>

@@ -191,6 +191,12 @@ plugin), also do the following before reinstalling:
   triggers the ticker text effect (`POST /api/command`, `Overlay Model
   Effect` / `Text`). Success -> ack; any failure -> nack (cloud expires the
   item after 3 nacks).
+- Each poll also reports plugin + FPP version to the cloud (`POST
+  /api/v1/telemetry`) via `FPPClient.get_fpp_version()` (`GET
+  /api/fppd/version`), stored as `PluginCheckin.plugin_version`/
+  `fpp_version` and shown on both the plugin's own status page and the
+  cloud admin Shows page — support/troubleshooting info, not used for any
+  compatibility gating.
 - Settings and status live in `config/settings.json` / `config/status.json`
   — plain JSON shared between the Python daemon and the PHP UI pages
   (`content.php`, `status.php`), deliberately not using FPP's native

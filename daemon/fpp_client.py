@@ -76,6 +76,22 @@ class FPPClient:
     def is_alive(self) -> bool:
         return self._fetch_status() is not None
 
+    def get_fpp_version(self) -> Optional[str]:
+        """GET /api/fppd/version -> {"version": "9.5.3-5-g87310ad7a", ...}.
+        Used purely for telemetry (so Joe can see which FPP build a show is
+        running when troubleshooting with a customer) -- never fatal if it
+        fails, just omitted from that poll's telemetry report."""
+        try:
+            r = requests.get(f"{self.base_url}/api/fppd/version", timeout=self.timeout)
+            if r.status_code == 200:
+                version = r.json().get("version")
+                return version or None
+            log.warning("FPP version check -> HTTP %s", r.status_code)
+            return None
+        except (requests.RequestException, ValueError) as exc:
+            log.warning("FPP version check failed: %s", exc)
+            return None
+
     def _fetch_status(self) -> Optional[dict]:
         """GET /api/system/status — NOT /api/status, which 404s on FPP 9.x
         (confirmed against a live 9.5.3 box; that older path is a Limonade
