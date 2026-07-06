@@ -98,6 +98,10 @@ $actionUrl = htmlspecialchars($_SERVER['REQUEST_URI']);
   .nnl-box input[type=text], .nnl-box input[type=password], .nnl-box input[type=number] {
     width: 100%; max-width: 420px; padding: 6px; box-sizing: border-box;
   }
+  .nnl-box input[type=checkbox] {
+    width: 16px !important; height: 16px !important; min-width: 16px; min-height: 16px;
+    padding: 0 !important; margin: 0 6px 0 0; vertical-align: middle; box-sizing: border-box;
+  }
   .nnl-msg { padding: 8px 12px; margin: 10px 0; border-radius: 4px; }
   .nnl-ok { background: #e2f7e2; color: #1a5d1a; }
   .nnl-error { background: #fde2e2; color: #8a1c1c; }
