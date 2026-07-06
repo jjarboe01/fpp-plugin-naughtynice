@@ -109,6 +109,22 @@ running the same shared-memory-buffer approach as phase 1's
 the same hardware. Don't switch this back to a native image entry without
 retesting on real hardware first.
 
+**Why `nnl_display_image.py` uses `ffmpeg`, not Pillow.** FPP doesn't exec
+a playlist script entry directly — it dispatches through
+`$FPPDIR/scripts/eventScript`, which for any `.py` file hardcodes
+`exec /usr/bin/python3 "$@"`, ignoring the script's own shebang and
+executable bit entirely. That means this script always runs under the
+bare system `python3`, never this plugin's venv, so it can't rely on
+Pillow (a venv-only dependency used by the *daemon*, which is launched
+differently — see `scripts/postStart.sh`, which invokes the venv python
+explicitly rather than going through `eventScript`). Shelling out to
+`ffmpeg` (already relied on by FPP itself, and by phase 1's original
+script on this exact hardware) needs nothing beyond the standard library,
+so it's unaffected by which interpreter FPP decides to invoke. An earlier
+version of this file imported PIL directly and would have raised
+`ModuleNotFoundError` every time it actually ran under FPP — caught before
+shipping to a real customer, not from a live failure.
+
 ## How it works
 
 - `scripts/postStart.sh` launches `daemon/nnl_daemon.py` as a detached

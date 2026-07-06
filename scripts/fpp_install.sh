@@ -41,13 +41,22 @@ else
 fi
 
 # Deploy the PhotoZone display script into FPP's own scripts directory so
-# playlist "script" entries can reference it by name. Its shebang points
-# directly at this plugin's venv python so it has Pillow available without
-# depending on whatever the system python3/ffmpeg happen to be.
+# playlist "script" entries can reference it by name. IMPORTANT: FPP's
+# eventScript wrapper always runs .py scripts under the bare system
+# python3 (ignoring this file's shebang/executable bit entirely — see the
+# script's own docstring), so it's deliberately stdlib-only + ffmpeg
+# rather than depending on this plugin's venv/Pillow.
 mkdir -p "$SCRIPTS_DIR"
 cp "$PLUGIN_DIR/scripts/nnl_display_image.py" "$SCRIPTS_DIR/nnl_display_image.py"
 chmod +x "$SCRIPTS_DIR/nnl_display_image.py"
 chown fpp:fpp "$SCRIPTS_DIR/nnl_display_image.py" 2>/dev/null || true
+
+if ! command -v ffmpeg >/dev/null 2>&1; then
+    echo "NaughtyNice Cloud: WARNING — ffmpeg not found on this system. The photo/silhouette" \
+         "overlay (nnl_display_image.py) needs it to decode current_display.png; ticker text" \
+         "will still work without it, but photos won't display until ffmpeg is installed" \
+         "(e.g. 'sudo apt-get install -y ffmpeg')." >&2
+fi
 
 # This script runs as root; hand ownership of everything it touched back to
 # the fpp user so both php-fpm (content.php's settings save) and the daemon
