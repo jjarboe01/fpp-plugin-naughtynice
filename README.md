@@ -125,6 +125,33 @@ version of this file imported PIL directly and would have raised
 `ModuleNotFoundError` every time it actually ran under FPP — caught before
 shipping to a real customer, not from a live failure.
 
+## Uninstalling
+
+FPP's Plugin Manager removes the plugin's own directory
+(`/home/fpp/media/plugins/fpp-plugin-naughtynice`) after
+`scripts/fpp_uninstall.sh` runs — that script itself only stops the poll
+daemon. Neither step touches the FPP-level artifacts that install-time
+auto-provisioning created **outside** the plugin directory:
+
+- The `PhotoZone` and `TickerZone` Pixel Overlay Models
+- The `breaking_news` playlist
+- `/home/fpp/media/scripts/nnl_display_image.py`
+
+These are left in place on purpose — they're the show's own content, not
+disposable plugin state, so a routine uninstall/reinstall (e.g. to update
+the plugin) doesn't wipe out a manually-tuned matrix layout. That also
+means a normal uninstall leaves the "sync from existing" path as the one
+`fpp_provision.py` will take on the next install, not the "detect and
+create" path.
+
+**For a true from-scratch test** (or to fully remove every trace of the
+plugin), also do the following before reinstalling:
+
+1. Content Setup -> Pixel Overlay Models -> delete `PhotoZone` and
+   `TickerZone`.
+2. Content Setup -> Playlists -> delete `breaking_news`.
+3. Over SSH: `rm /home/fpp/media/scripts/nnl_display_image.py`
+
 ## How it works
 
 - `scripts/postStart.sh` launches `daemon/nnl_daemon.py` as a detached
