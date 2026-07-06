@@ -100,6 +100,28 @@ Models or a playlist first:
   by a re-run — safe to customize (add lead-in content, etc.) as long as
   the script entry stays.
 
+**Incident, 2026-07-06 — a fresh install wiped the customer's real matrix
+model.** The original `fpp_provision.py` created PhotoZone/TickerZone by
+POSTing one bare model object per call. `POST /api/models` in FPP does
+not append — confirmed from FPP's own source
+(`PixelOverlayManager::render_POST`, `src/overlays/PixelOverlay.cpp`) —
+it truncates and rewrites `config/model-overlays.json` with the raw
+request body, verbatim, every time. Two consequences: the pre-existing
+real matrix model (originally named `P5Large`) was destroyed by the
+first call, and neither new zone model even loaded correctly itself
+(a bare object has no top-level `"models"` key for FPP's loader to
+find). FPP's own channel-output subsystem auto-recreated a bare
+replacement (`P5`, `autoCreated: true`) after the fact so the box didn't
+go fully dark, but the original model's name and any manual tweaks were
+lost. **Fixed:** every model-list change now does GET the full current
+list → modify in memory → POST the complete `{"models": [...]}` list
+back in exactly one call, so anything already on FPP (including the
+customer's own real matrix) is always preserved. Also added `--dry-run`
+(and a matching checkbox on the setup page) to preview the exact
+payload before writing anything — verified live against the real Pi5
+post-fix: the plan correctly preserved the existing model and added
+both zones without a single write.
+
 **Why a script entry and not FPP's native "image" playlist entry type?**
 Tested live against this plugin's own Pi5 dev rig on two different FPP
 9.5.3 builds — the native `"image"` entry hung indefinitely (never

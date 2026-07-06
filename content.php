@@ -52,20 +52,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $nnlMessageClass = 'nnl-error';
         } else {
             $forceFlag = isset($_POST['force_recreate']) ? ' --force-recreate' : '';
+            $dryRun = isset($_POST['dry_run']);
+            $dryFlag = $dryRun ? ' --dry-run' : '';
             $cmd = 'cd ' . escapeshellarg($daemonDir) . ' && ' .
-                   escapeshellarg($venvPython) . ' fpp_provision.py' . $forceFlag . ' 2>&1';
-            shell_exec($cmd);
+                   escapeshellarg($venvPython) . ' fpp_provision.py' . $forceFlag . $dryFlag . ' 2>&1';
+            $output = shell_exec($cmd);
 
-            $status = nnl_read_status();
-            $lastProvision = isset($status['last_provision']) ? $status['last_provision'] : null;
-            if ($lastProvision && !empty($lastProvision['ok'])) {
-                $nnlMessage = $lastProvision['message'];
-                $nnlMessageClass = 'nnl-ok';
+            if ($dryRun) {
+                // --dry-run never touches config/status.json, so parse the
+                // script's own stdout (a JSON blob) directly instead of
+                // reading last_provision.
+                $parsed = json_decode(trim((string)$output), true);
+                if ($parsed && isset($parsed['message'])) {
+                    $nnlMessage = $parsed['message'];
+                    $nnlMessageClass = !empty($parsed['ok']) ? 'nnl-ok' : 'nnl-error';
+                } else {
+                    $nnlMessage = 'Dry run did not return a result — check the plugin log.';
+                    $nnlMessageClass = 'nnl-error';
+                }
             } else {
-                $nnlMessage = $lastProvision && isset($lastProvision['message'])
-                    ? $lastProvision['message']
-                    : 'Zone setup did not report a result — check the plugin log.';
-                $nnlMessageClass = 'nnl-error';
+                $status = nnl_read_status();
+                $lastProvision = isset($status['last_provision']) ? $status['last_provision'] : null;
+                if ($lastProvision && !empty($lastProvision['ok'])) {
+                    $nnlMessage = $lastProvision['message'];
+                    $nnlMessageClass = 'nnl-ok';
+                } else {
+                    $nnlMessage = $lastProvision && isset($lastProvision['message'])
+                        ? $lastProvision['message']
+                        : 'Zone setup did not report a result — check the plugin log.';
+                    $nnlMessageClass = 'nnl-error';
+                }
             }
         }
     }
@@ -146,6 +162,10 @@ $actionUrl = htmlspecialchars($_SERVER['REQUEST_URI']);
       <input type="hidden" name="nnl_action" value="provision">
       <label style="display:inline; font-weight:normal;">
         <input type="checkbox" name="force_recreate" style="width:auto;"> Full reset (delete &amp; rebuild both zones from scratch)
+      </label>
+      <br>
+      <label style="display:inline; font-weight:normal;">
+        <input type="checkbox" name="dry_run" style="width:auto;"> Dry run (preview only — writes nothing to FPP)
       </label>
       <p><button type="submit">Re-run zone setup</button></p>
     </form>

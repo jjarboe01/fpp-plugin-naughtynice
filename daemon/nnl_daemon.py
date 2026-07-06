@@ -30,7 +30,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("nnl_daemon")
 
-PLUGIN_VERSION = "0.3.1"
+PLUGIN_VERSION = "0.3.2"
 MAX_BACKOFF_SECONDS = 300
 
 _stop = False
