@@ -36,11 +36,30 @@ URL, and save. The PhotoZone/TickerZone overlay models and the
 breaking-news playlist are set up for you automatically during install —
 see "Zone auto-provisioning" below.
 
-**After installing (or updating) the plugin, restart FPPD** (Status/Control
--> Restart FPPD, or reboot the Pi) so `scripts/postStart.sh` actually
-launches the poll daemon. FPP only runs a plugin's `postStart.sh` when
-`fppd` itself starts — installing a plugin while `fppd` is already running
-does not start its daemon. Until you restart, the setup/status pages will
+**After installing (or updating) the plugin, restart FPPD using the
+"Restart FPPD (full)" button on this plugin's own setup page** (Content
+Setup -> NaughtyNice Cloud - Setup -> **FPP Control**), not FPP's normal
+Status/Control -> Restart FPPD button.
+
+**Incident, 2026-07-06 — FPP's own "Restart FPPD" button doesn't reliably
+restart the plugin daemon.** FPP's UI defaults to a *quick* restart
+(`GET api/system/fppd/restart?quick=1`, see FPP's own `js/fpp.js`) whenever
+it doesn't think a full restart is required. A quick restart just reloads
+fppd's config in place — it does **not** re-run `preStart.sh`/`postStart.sh`
+— so an already-running daemon (a detached `nohup`'d process, outside
+fppd's own process tree) is never touched, even though fppd itself shows a
+fresh uptime immediately after. This showed up as: plugin files updated to
+a new version on disk, FPPD uptime freshly reset, but the daemon's own log
+(`logs/fpp-plugin-naughtynice-daemon.log`) showing no new "Starting
+NaughtyNice Cloud plugin daemon" line at all — the old process was simply
+never replaced. Only a full stop/start of fppd (no `quick` flag) or a full
+Pi reboot actually re-invokes the plugin hooks and picks up new code.
+Fixed by adding **Restart FPPD (full)** and **Reboot Pi** buttons directly
+to this plugin's setup page (`content.php`), which call FPP's own
+`/api/system/fppd/restart` (without `quick=1`) and `/api/system/reboot`
+respectively — no more relying on FPP's own button defaulting the right way.
+
+Until the daemon has actually (re)started, the setup/status pages will
 correctly show "Test connection" succeeding (that's a live PHP curl call)
 while the **Status** panel stays empty/stale, because nothing has ever
 written `config/status.json`. If you don't want to restart the whole show

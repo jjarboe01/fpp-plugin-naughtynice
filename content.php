@@ -38,6 +38,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $result = nnl_test_connection($nnlSettings);
         $nnlMessage = $result['message'];
         $nnlMessageClass = $result['ok'] ? 'nnl-ok' : 'nnl-error';
+    } elseif (isset($_POST['nnl_action']) && $_POST['nnl_action'] === 'restart_fppd') {
+        // Deliberately no ?quick=1 -- see nnl_fpp_system_action() doc comment.
+        // A full restart is required to actually re-launch this plugin's
+        // daemon process after an update; the quick restart FPP itself
+        // defaults to does not.
+        $result = nnl_fpp_system_action($nnlSettings, '/api/system/fppd/restart', 8);
+        $nnlMessage = $result['message'];
+        $nnlMessageClass = $result['ok'] ? 'nnl-ok' : 'nnl-error';
+    } elseif (isset($_POST['nnl_action']) && $_POST['nnl_action'] === 'reboot_fpp') {
+        if (!isset($_POST['confirm_reboot'])) {
+            $nnlMessage = 'Reboot not sent — check "Yes, reboot now" to confirm first.';
+            $nnlMessageClass = 'nnl-error';
+        } else {
+            $result = nnl_fpp_system_action($nnlSettings, '/api/system/reboot', 5);
+            $nnlMessage = $result['message'];
+            $nnlMessageClass = $result['ok'] ? 'nnl-ok' : 'nnl-error';
+        }
     } elseif (isset($_POST['nnl_action']) && $_POST['nnl_action'] === 'provision') {
         // Re-runs the same auto-provisioning fpp_install.sh does on first
         // install. Default mode syncs settings.json from whatever
@@ -142,6 +159,30 @@ $actionUrl = htmlspecialchars($_SERVER['REQUEST_URI']);
       <tr><td>Plugin version:</td><td><?php echo htmlspecialchars($nnlStatus['plugin_version'] ?? '—'); ?></td></tr>
       <tr><td>FPP version:</td><td><?php echo htmlspecialchars($nnlStatus['fpp_version'] ?? '—'); ?></td></tr>
     </table>
+  </fieldset>
+
+  <fieldset>
+    <legend>FPP Control</legend>
+    <p><small>After updating this plugin, use <strong>Restart FPPD (full)</strong> below — not FPP's own
+      Status/Control page — to make sure the new daemon code actually loads. FPP's normal "Restart FPPD"
+      button defaults to a <em>quick</em> restart that reloads fppd's config in place without re-running
+      this plugin's start/stop scripts, so an already-running daemon keeps its old code even though fppd
+      itself looks freshly restarted. (Confirmed 2026-07-06: only a full restart or a full reboot actually
+      picks up a plugin update.) If a full restart doesn't do it either, reboot the Pi below.</small></p>
+
+    <form method="post" action="<?php echo $actionUrl; ?>" style="display:inline-block; margin-right:16px;">
+      <input type="hidden" name="nnl_action" value="restart_fppd">
+      <button type="submit">Restart FPPD (full)</button>
+    </form>
+
+    <form method="post" action="<?php echo $actionUrl; ?>" style="display:inline-block;"
+          onsubmit="return confirm('Reboot the Pi now? This will interrupt any currently running show.');">
+      <input type="hidden" name="nnl_action" value="reboot_fpp">
+      <label style="display:inline; font-weight:normal;">
+        <input type="checkbox" name="confirm_reboot" style="width:auto;"> Yes, reboot now
+      </label>
+      <button type="submit" style="margin-left:8px;">Reboot Pi</button>
+    </form>
   </fieldset>
 
   <fieldset>
