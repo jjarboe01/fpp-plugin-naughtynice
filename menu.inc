@@ -1,7 +1,8 @@
 <?php
 # $menuEntries is an array of menu entries for this plugin.
 # See FalconChristmas/fpp-plugin-Template for the field reference this
-# follows (text/type/page/wrap).
+# follows (text/type/page/wrap). At most one entry per menu type (FPP
+# plugin guideline §9.1) - the repo/home link lives on about.php instead.
 
 $menuEntries = Array(
 	Array(
@@ -20,12 +21,6 @@ $menuEntries = Array(
 		'text' => 'NaughtyNice Cloud - About',
 		'type' => 'help',
 		'page' => 'about.php',
-		'wrap' => 1
-	),
-	Array(
-		'text' => 'NaughtyNice Cloud - Home',
-		'type' => 'help',
-		'page' => 'https://github.com/jjarboe01/fpp-plugin-naughtynice',
 		'wrap' => 1
 	)
 );

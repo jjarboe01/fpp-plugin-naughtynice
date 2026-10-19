@@ -13,6 +13,7 @@ Launched by scripts/postStart.sh, stopped by scripts/preStop.sh (SIGTERM).
 """
 
 import logging
+import os
 import signal
 import sys
 import time
@@ -20,7 +21,7 @@ from datetime import datetime, timezone
 
 from cloud_client import CloudApiError, CloudClient, InvalidToken, LicenseExpired
 from config import load_settings, read_status, write_status
-from fpp_client import FPPClient
+from fpp_client import DISPLAY_IMAGE_PATH, FPPClient
 from image_processor import prepare_display_image
 
 logging.basicConfig(
@@ -52,6 +53,15 @@ def _interruptible_sleep(seconds: float) -> None:
         time.sleep(min(1.0, end - time.monotonic()))
 
 
+def _discard_display_image() -> None:
+    """Delivery failed, so the display script will never run and delete the
+    composited photo itself -- remove it here so it isn't left on disk."""
+    try:
+        os.remove(DISPLAY_IMAGE_PATH)
+    except OSError:
+        pass
+
+
 def _process_item(cloud: CloudClient, fpp: FPPClient, item: dict, matrix_width: int, photo_zone_height: int, plan: str = "full") -> None:
     submission_id = item["id"]
     try:
@@ -79,12 +89,14 @@ def _process_item(cloud: CloudClient, fpp: FPPClient, item: dict, matrix_width: 
 
         if ok:
             cloud.ack(submission_id)
-            log.info("Delivered submission %s (%s, %s)", submission_id, item["child_name"], item["verdict"])
+            log.info("Delivered submission %s (%s)", submission_id, item["verdict"])
         else:
+            _discard_display_image()
             cloud.nack(submission_id, "one or more FPP calls failed — see plugin log")
             log.warning("Nacked submission %s after FPP call failure", submission_id)
     except Exception as exc:  # noqa: BLE001 — one bad item must never kill the loop
         log.exception("Unhandled error processing submission %s", submission_id)
+        _discard_display_image()
         try:
             cloud.nack(submission_id, f"exception: {exc}")
         except Exception:

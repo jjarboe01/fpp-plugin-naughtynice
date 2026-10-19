@@ -36,10 +36,10 @@ URL, and save. The PhotoZone/TickerZone overlay models and the
 breaking-news playlist are set up for you automatically during install —
 see "Zone auto-provisioning" below.
 
-**After installing (or updating) the plugin, restart FPPD using the
-"Restart FPPD (full)" button on this plugin's own setup page** (Content
-Setup -> NaughtyNice Cloud - Setup -> **FPP Control**), not FPP's normal
-Status/Control -> Restart FPPD button.
+**After installing (or updating) the plugin, click "Request FPPD restart"
+on this plugin's own setup page** (Content Setup -> NaughtyNice Cloud -
+Setup -> **FPP Control**), then use the Restart banner FPP shows. That
+requests a *full* restart, which is what reloads the daemon.
 
 **Incident, 2026-07-06 — FPP's own "Restart FPPD" button doesn't reliably
 restart the plugin daemon.** FPP's UI defaults to a *quick* restart
@@ -50,14 +50,15 @@ fppd's config in place — it does **not** re-run `preStart.sh`/`postStart.sh`
 fppd's own process tree) is never touched, even though fppd itself shows a
 fresh uptime immediately after. This showed up as: plugin files updated to
 a new version on disk, FPPD uptime freshly reset, but the daemon's own log
-(`logs/fpp-plugin-naughtynice-daemon.log`) showing no new "Starting
+(`logs/fpp-plugin-naughtynice.log`) showing no new "Starting
 NaughtyNice Cloud plugin daemon" line at all — the old process was simply
 never replaced. Only a full stop/start of fppd (no `quick` flag) or a full
 Pi reboot actually re-invokes the plugin hooks and picks up new code.
-Fixed by adding **Restart FPPD (full)** and **Reboot Pi** buttons directly
-to this plugin's setup page (`content.php`), which call FPP's own
-`/api/system/fppd/restart` (without `quick=1`) and `/api/system/reboot`
-respectively — no more relying on FPP's own button defaulting the right way.
+Fixed by adding **Request FPPD restart** and **Request reboot** buttons to
+this plugin's setup page (`content.php`). They set FPP's own restart/reboot
+flags (`SetRestartFlag(1)` = full restart, `SetRebootFlag()`) rather than
+restarting fppd directly, so FPP shows its Restart/Reboot banner and
+sequences it safely around a running show (FPP plugin guideline §4.1).
 
 Until the daemon has actually (re)started, the setup/status pages will
 correctly show "Test connection" succeeding (that's a live PHP curl call)
@@ -205,7 +206,9 @@ plugin), also do the following before reinstalling:
 - The daemon polls `GET /api/v1/queue` on the configured interval (default
   10s). For each submission it downloads the photo (or falls back to a
   boy/girl silhouette), composites a "breaking news" overlay via Pillow,
-  uploads it to FPP (`POST /api/file/images/current_display.png`), breaks
+  writes it to `/home/fpp/media/plugindata/fpp-plugin-naughtynice/current_display.png`
+  (the display script deletes it once it's on the matrix; any failed delivery
+  deletes it too), breaks
   into the configured playlist (`GET /api/playlist/{name}/start`), and
   triggers the ticker text effect (`POST /api/command`, `Overlay Model
   Effect` / `Text`). Success -> ack; any failure -> nack (cloud expires the

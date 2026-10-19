@@ -1,22 +1,26 @@
+#!/bin/bash
 # Shared helpers for this plugin's lifecycle scripts. Not directly executed
-# by FPP — sourced by preStart.sh/postStart.sh/postStop.sh.
-#
-# Cross-user note (same story as Remote Falcon's plugin, which this pattern
-# is borrowed from): FPP's command system runs these scripts as root, but a
-# developer testing manually over SSH may run as the fpp user. Try a direct
-# signal first, fall back to passwordless sudo, so it works either way.
+# by FPP — sourced by fpp_install.sh/preStart.sh/postStart.sh/postStop.sh/
+# fpp_uninstall.sh. FPP runs all of those as root, so no sudo is needed.
 
 PLUGIN_DIR=/home/fpp/media/plugins/fpp-plugin-naughtynice
 PIDFILE="${PLUGIN_DIR}/nnl_daemon.pid"
-LOGFILE=/home/fpp/media/logs/fpp-plugin-naughtynice-daemon.log
+DATA_DIR=/home/fpp/media/plugindata/fpp-plugin-naughtynice
+
+# Single plugin log in FPP's log directory (rotated + included in the
+# Support Zip). getSetting comes from FPP's scripts/common; the subshell and
+# set +u keep sourcing it from aborting a set -e/-u caller.
+LOGDIR=$( ( set +u; . "${FPPDIR:-/opt/fpp}/scripts/common" >/dev/null 2>&1 && getSetting logDirectory ) 2>/dev/null || true )
+[ -n "$LOGDIR" ] || LOGDIR=/home/fpp/media/logs
+LOGFILE="${LOGDIR}/fpp-plugin-naughtynice.log"
 
 nnl_signal() {
     local sig="$1" pid="$2"
-    kill -"$sig" "$pid" 2>/dev/null || sudo -n kill -"$sig" "$pid" 2>/dev/null || true
+    kill -"$sig" "$pid" 2>/dev/null || true
 }
 
 nnl_alive() {
-    kill -0 "$1" 2>/dev/null || sudo -n kill -0 "$1" 2>/dev/null
+    kill -0 "$1" 2>/dev/null
 }
 
 nnl_stop_if_running() {
@@ -33,7 +37,7 @@ nnl_stop_if_running() {
         fi
         rm -f "$PIDFILE"
     else
-        pkill -f nnl_daemon.py 2>/dev/null || sudo -n pkill -f nnl_daemon.py 2>/dev/null || true
+        pkill -f nnl_daemon.py 2>/dev/null || true
     fi
 }
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Writes the just-uploaded current_display.png into the PhotoZone Pixel
+Writes the daemon's freshly composited current_display.png into the PhotoZone Pixel
 Overlay Model's shared-memory buffer, holds it for display_duration_seconds,
 then disables the zone so the normal show resumes.
 
@@ -50,8 +50,9 @@ from config import load_settings  # noqa: E402
 
 PIXEL_OFFSET = 12  # byte offset where RGB data begins in the overlay buffer
 FLAGS_OFFSET = 8   # byte offset of the dirty-flag uint32_t
-IMAGE_PATH = "/home/fpp/media/images/current_display.png"
-UPLOAD_SETTLE_SECONDS = 3  # give the just-finished upload a moment to land on disk
+DATA_DIR = "/home/fpp/media/plugindata/fpp-plugin-naughtynice"
+IMAGE_PATH = os.path.join(DATA_DIR, "current_display.png")
+UPLOAD_SETTLE_SECONDS = 3  # give the daemon's just-finished write a moment to land
 
 
 def fpp_cmd(base_url: str, command: str, args: list) -> None:
@@ -96,7 +97,7 @@ def main() -> int:
     base_url = settings.fpp_base_url.rstrip("/")
     buffer_path = f"/dev/shm/FPP-Model-Overlay-Buffer-{model}"
 
-    # 0. Give the daemon's just-completed upload a moment to finish landing
+    # 0. Give the daemon's just-completed write a moment to finish landing
     #    on disk before we read it.
     time.sleep(UPLOAD_SETTLE_SECONDS)
 
@@ -110,6 +111,13 @@ def main() -> int:
     # 2. Decode + crop via ffmpeg.
     pixel_data = decode_and_crop(IMAGE_PATH, width, height)
     expected = width * height * 3
+
+    # The decoded pixels are all we need from here on; don't keep a child's
+    # photo on disk any longer than this (privacy - delete on every path).
+    try:
+        os.remove(IMAGE_PATH)
+    except OSError:
+        pass
 
     if len(pixel_data) != expected:
         print(f"ERROR: ffmpeg produced {len(pixel_data)} bytes, expected {expected} "
