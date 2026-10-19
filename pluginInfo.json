@@ -2,11 +2,13 @@
 	"repoName": "fpp-plugin-naughtynice",
 	"name": "NaughtyNice Cloud",
 	"author": "Joseph Jarboe (jjarboe01)",
-	"description": "Connects FPP to the NaughtyNice Cloud service. Outbound-only polling - no inbound firewall rules needed.",
+	"description": "Shows visitor submissions from the NaughtyNice Cloud service (naughtynicefpp.com) on your matrix: a child's first name, a naughty/nice verdict and an optional photo. Outbound-only polling; photos are deleted from this device once shown.",
 	"homeURL": "https://github.com/jjarboe01/fpp-plugin-naughtynice",
 	"srcURL": "https://github.com/jjarboe01/fpp-plugin-naughtynice.git",
 	"bugURL": "https://github.com/jjarboe01/fpp-plugin-naughtynice/issues",
+	"iconURL": "https://raw.githubusercontent.com/jjarboe01/fpp-plugin-naughtynice/main/icon.png",
 	"allowUpdates": 1,
+	"releaseNotesStyle": "gitHistory",
 	"versions": [
 		{
 			"minFPPVersion": "9.0",
@@ -30,5 +32,53 @@
 				"scripts": []
 			}
 		}
-	]
+	],
+	"privacy": {
+		"summary": "Polls naughtynicefpp.com for visitor submissions (a child's first name, naughty/nice verdict and optional photo) and shows them on your display.",
+		"sends": [
+			{
+				"to": "naughtynicefpp.com",
+				"what": "Your plugin token and whether each submission was shown",
+				"why": "Fetch queued submissions and confirm delivery",
+				"alwaysOn": false
+			},
+			{
+				"to": "naughtynicefpp.com",
+				"what": "Plugin version and FPP version",
+				"why": "Show connection status in your NaughtyNiceFPP dashboard",
+				"alwaysOn": false
+			}
+		],
+		"collects": [
+			{
+				"what": "Child's first name, naughty/nice verdict and photo from a visitor's submission",
+				"about": "visitors",
+				"keptDays": 0,
+				"canDelete": true,
+				"where": "plugindata/fpp-plugin-naughtynice/ (deleted automatically once shown)"
+			}
+		],
+		"sensors": [],
+		"remoteAccess": "none",
+		"systemChanges": [
+			{
+				"kind": "service",
+				"what": "Runs a background daemon (nnl_daemon.py) while fppd is running"
+			},
+			{
+				"kind": "download",
+				"what": "Installs requests and Pillow from PyPI into a plugin venv, and the fonts-dejavu-core apt package if it is missing"
+			},
+			{
+				"kind": "core-settings",
+				"what": "Creates PhotoZone/TickerZone Pixel Overlay Models and a breaking-news playlist; copies nnl_display_image.py into FPP's scripts folder"
+			},
+			{
+				"kind": "core-settings",
+				"what": "Sets FPP's restart or reboot flag when you click Request FPPD restart / Request reboot on the setup page"
+			}
+		],
+		"closedCode": false,
+		"other": "Visitors submit on naughtynicefpp.com, which holds each submission (and its photo) only until it is delivered or expires. Uninstall removes the plugin's data."
+	}
 }

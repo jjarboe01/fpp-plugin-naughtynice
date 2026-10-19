@@ -116,7 +116,7 @@ function nnl_save_settings($settings) {
     if (!is_writable(NNL_CONFIG_DIR)) {
         return array('ok' => false, 'message' => "Config directory (" . NNL_CONFIG_DIR . ") is not writable by the web server user. " .
             "This usually means a plugin lifecycle script ran as root and left it root-owned -- run: " .
-            "sudo chown -R fpp:fpp " . NNL_CONFIG_DIR);
+            "chown -R fpp:fpp " . NNL_CONFIG_DIR);
     }
 
     $tmp = NNL_SETTINGS_PATH . '.tmp';
@@ -187,43 +187,18 @@ function nnl_test_connection($settings) {
     return array('ok' => true, 'message' => "[$envLabel] Connected to {$active['cloud_base_url']}. License status: $license");
 }
 
-// Hits one of FPP's own system-control API endpoints (found in FPP's own
-// js/fpp.js: RestartFPPD() calls GET api/system/fppd/restart[?quick=1],
-// Reboot() calls GET api/system/reboot). Deliberately NOT passing quick=1
-// on restart -- 2026-07-06 incident: a "quick" FPPD restart (the default
-// when FPP doesn't think a full restart is required) only reloads fppd's
-// own config in place and does NOT re-run plugin preStart.sh/postStart.sh,
-// so an already-running daemon process never gets replaced even though
-// fppd itself shows a fresh uptime. Only a genuine full stop/start of
-// fppd (or a full Pi reboot) re-invokes those hooks and picks up new
-// plugin code. See README "Restarting the daemon after an update".
-//
-// Returns array('ok' => bool, 'message' => string). For reboot, a curl
-// timeout/connection-reset is treated as success -- the Pi going down
-// mid-response is the expected happy path, not a failure.
-function nnl_fpp_system_action($settings, $path, $timeoutSeconds = 5) {
-    $fppBaseUrl = rtrim($settings['fpp_base_url'], '/');
-    $url = $fppBaseUrl . $path;
-    $ch = curl_init($url);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, $timeoutSeconds);
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $timeoutSeconds);
-    $body = curl_exec($ch);
-    $err = curl_error($ch);
-    $errno = curl_errno($ch);
-    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+// Where the daemon writes the composited breaking-news image, and where
+// scripts/nnl_display_image.py reads it from. Lives in this plugin's own
+// plugindata directory (FPP listing guideline §5) -- never under
+// /home/fpp/media/images, where it would show up in FPP's file manager.
+// The display script deletes it as soon as it has been pushed to the
+// overlay buffer; this is the manual "delete now" control (§14.5).
+define('NNL_DATA_DIR', '/home/fpp/media/plugindata/fpp-plugin-naughtynice');
+define('NNL_DISPLAY_IMAGE', NNL_DATA_DIR . '/current_display.png');
 
-    // CURLE_OPERATION_TIMEDOUT(28) / CURLE_GOT_NOTHING(52) / CURLE_RECV_ERROR(56)
-    // are all expected if FPP is going down (reboot) right as it responds.
-    if ($body === false && in_array($errno, array(28, 52, 56), true)) {
-        return array('ok' => true, 'message' => "Request sent to $path — FPP is restarting/rebooting now, give it a minute.");
+function nnl_clear_display_image() {
+    if (!file_exists(NNL_DISPLAY_IMAGE)) {
+        return true;
     }
-    if ($body === false) {
-        return array('ok' => false, 'message' => "Request to $path failed: $err");
-    }
-    if ($code !== 200) {
-        return array('ok' => false, 'message' => "$path returned HTTP $code: " . substr($body, 0, 200));
-    }
-    return array('ok' => true, 'message' => "Request sent to $path successfully.");
+    return @unlink(NNL_DISPLAY_IMAGE);
 }

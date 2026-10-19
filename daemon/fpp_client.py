@@ -12,12 +12,12 @@ Notable FPP 9.x quirks (learned the hard way in phase 1 — see git history of
 LightShow-NaughtyNice for the FPP 6.x-assumption bugs these fixed):
 - Playlist start: GET /api/playlist/{name}/start  (singular; /api/playlists/ is list-only)
 - Command API: args must be an ARRAY, not a dict
-- Photo display: composite onto background, upload raw PNG bytes via
-  POST /api/file/images/{filename} (NOT /jqUpload) -> Image playlist entry
+- Photo display: composite onto background, write the PNG into this
+  plugin's plugindata dir; scripts/nnl_display_image.py (a playlist "script"
+  entry) pushes it into the PhotoZone overlay buffer and then deletes it
 - Ticker text: "Text" effect (not "Scrolling Text"); array arg order matters
 """
 
-import io
 import logging
 import os
 import time
@@ -28,7 +28,11 @@ from PIL import Image, ImageDraw, ImageFont
 
 log = logging.getLogger(__name__)
 
-_DISPLAY_FILENAME = "current_display.png"
+# Composited image lives in this plugin's own plugindata dir (FPP listing
+# guideline §5), not /home/fpp/media/images. scripts/nnl_display_image.py
+# reads it from the same path and deletes it once it's on the matrix.
+DATA_DIR = "/home/fpp/media/plugindata/fpp-plugin-naughtynice"
+DISPLAY_IMAGE_PATH = os.path.join(DATA_DIR, "current_display.png")
 
 # Breaking news overlay dimensions (PhotoZone is 192x140 by default —
 # configurable via settings.json for other matrix layouts)
@@ -251,7 +255,7 @@ class FPPClient:
 
     def push_photo_overlay(self, photo: Image.Image, child_name: str, status: str) -> bool:
         """Composite photo onto a matrix_width x matrix_width canvas with
-        breaking-news overlays, upload as current_display.png."""
+        breaking-news overlays, write it to DISPLAY_IMAGE_PATH."""
         w = self.matrix_width
         lower_y = self.photo_zone_height - 22 if self.photo_zone_height >= 22 else 0
         badge_x = int(w * 0.635)
@@ -282,23 +286,25 @@ class FPPClient:
             status_text = "NICE" if status == "nice" else "NAUGHTY"
             _draw_text_centered(draw, status_text, font_status, badge_x, lower_y, w - 1, lower_y + _LOWER_H, _COLOR_WHITE)
 
-            buf = io.BytesIO()
-            canvas.save(buf, format="PNG")
-            buf.seek(0)
         except Exception as exc:
             log.error("push_photo_overlay image processing error: %s", exc)
             return False
 
-        url = f"{self.base_url}/api/file/images/{_DISPLAY_FILENAME}"
+        # Write atomically (tmp + rename) so the display script never reads
+        # a half-written PNG.
+        tmp_path = DISPLAY_IMAGE_PATH + ".tmp"
         try:
-            r = requests.post(url, data=buf.read(), headers={"Content-Type": "image/png"}, timeout=max(self.timeout, 15))
-            if r.status_code in (200, 204):
-                log.info("Uploaded %s to FPP", _DISPLAY_FILENAME)
-                return True
-            log.error("push_photo_overlay upload -> HTTP %s: %s", r.status_code, r.text[:200])
-            return False
-        except requests.RequestException as exc:
-            log.error("push_photo_overlay upload exception: %s", exc)
+            os.makedirs(DATA_DIR, exist_ok=True)
+            canvas.save(tmp_path, format="PNG")
+            os.replace(tmp_path, DISPLAY_IMAGE_PATH)
+            log.info("Wrote display image to %s", DISPLAY_IMAGE_PATH)
+            return True
+        except OSError as exc:
+            log.error("push_photo_overlay write failed (%s): %s", DISPLAY_IMAGE_PATH, exc)
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
             return False
 
     def get_ticker_font(self) -> str:
@@ -323,7 +329,7 @@ class FPPClient:
         chosen = _pick_font(fonts if isinstance(fonts, list) else [])
         if not chosen:
             log.error("FPP reports no fonts installed, so the ticker Text effect cannot render. "
-                      "Fix on the FPP box: 'sudo apt-get install -y fonts-dejavu-core' then a full "
+                      "Fix on the FPP box: 'apt-get install -y fonts-dejavu-core' (as root) then a full "
                       "FPPD restart (plugin page -> Restart FPPD (full)).")
             return fallback  # don't cache; re-check next time in case fonts get installed
         if chosen != fallback:

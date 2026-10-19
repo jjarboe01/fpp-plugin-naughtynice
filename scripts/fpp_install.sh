@@ -16,25 +16,23 @@
 # fpp:fpp at the end of this script.
 
 set -e
-PLUGIN_DIR=/home/fpp/media/plugins/fpp-plugin-naughtynice
+. "$(dirname "$0")/_lib.sh"   # PLUGIN_DIR, DATA_DIR, LOGFILE
 SCRIPTS_DIR=/home/fpp/media/scripts
 cd "$PLUGIN_DIR"
 
-mkdir -p config
+mkdir -p config "$DATA_DIR" "$(dirname "$LOGFILE")"
 
 VENV_OK=0
 if command -v python3 >/dev/null 2>&1; then
-    if python3 -m venv venv 2>/tmp/nnl_venv_err.log; then
-        ./venv/bin/pip install --quiet --upgrade pip
+    if python3 -m venv venv 2>>"$LOGFILE"; then
         ./venv/bin/pip install --quiet -r daemon/requirements.txt
         echo "NaughtyNice Cloud: venv created and dependencies installed."
         VENV_OK=1
     else
-        echo "NaughtyNice Cloud: venv creation failed (see /tmp/nnl_venv_err.log)," \
-             "falling back to --user pip install against the system python3."
-        cat /tmp/nnl_venv_err.log 2>/dev/null || true
+        echo "NaughtyNice Cloud: venv creation failed (details in $LOGFILE)," \
+             "falling back to a per-user install of daemon/requirements.txt on the system python3."
         python3 -m pip install --quiet --user -r daemon/requirements.txt || \
-            echo "NaughtyNice Cloud: pip install failed — install requests+Pillow manually before enabling the plugin."
+            echo "NaughtyNice Cloud: dependency install failed — install requests and Pillow manually before enabling the plugin."
     fi
 else
     echo "NaughtyNice Cloud: python3 not found on this system — the daemon cannot run." >&2
@@ -55,7 +53,7 @@ if ! command -v ffmpeg >/dev/null 2>&1; then
     echo "NaughtyNice Cloud: WARNING — ffmpeg not found on this system. The photo/silhouette" \
          "overlay (nnl_display_image.py) needs it to decode current_display.png; ticker text" \
          "will still work without it, but photos won't display until ffmpeg is installed" \
-         "(e.g. 'sudo apt-get install -y ffmpeg')." >&2
+         "(e.g. 'apt-get install -y ffmpeg')." >&2
 fi
 
 # The ticker's FPP "Text" overlay effect and the Pillow-rendered overlay
@@ -72,7 +70,7 @@ fi
 # This script runs as root; hand ownership of everything it touched back to
 # the fpp user so both php-fpm (content.php's settings save) and the daemon
 # (launched as fpp unless FPP's own hooks override that) can read/write it.
-chown -R fpp:fpp "$PLUGIN_DIR/config" "$PLUGIN_DIR/venv" 2>/dev/null || true
+chown -R fpp:fpp "$PLUGIN_DIR/config" "$PLUGIN_DIR/venv" "$DATA_DIR" 2>/dev/null || true
 
 # Auto-provision PhotoZone/TickerZone Pixel Overlay Models + the breaking-
 # news playlist so the plugin is ready to run immediately, without the

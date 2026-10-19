@@ -15,6 +15,11 @@ else
     pkill -f nnl_daemon.py 2>/dev/null || true
 fi
 
+# Remove this plugin's runtime data (any leftover display photo) and the
+# display script it copied into FPP's scripts directory.
+rm -rf /home/fpp/media/plugindata/fpp-plugin-naughtynice
+rm -f /home/fpp/media/scripts/nnl_display_image.py
+
 echo "fpp-plugin-naughtynice uninstalled"
 
 #fpp_uninstall
