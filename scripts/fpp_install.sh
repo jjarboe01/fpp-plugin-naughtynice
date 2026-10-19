@@ -58,6 +58,17 @@ if ! command -v ffmpeg >/dev/null 2>&1; then
          "(e.g. 'sudo apt-get install -y ffmpeg')." >&2
 fi
 
+# The ticker's FPP "Text" overlay effect and the Pillow-rendered overlay
+# image both want DejaVu Sans. Not every FPP image ships it (customers hit
+# "Could not find font 'DejaVuSans'"). The daemon now picks whatever font
+# FPP reports, but install DejaVu when we can so rendering is consistent.
+# fppd only scans fonts at startup, so a full FPPD restart picks it up.
+if [ ! -f /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf ] && command -v apt-get >/dev/null 2>&1; then
+    echo "NaughtyNice Cloud: installing fonts-dejavu-core for ticker text..."
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -q fonts-dejavu-core >/dev/null 2>&1 || \
+        echo "NaughtyNice Cloud: could not install fonts-dejavu-core (offline?) — ticker will use another installed font."
+fi
+
 # This script runs as root; hand ownership of everything it touched back to
 # the fpp user so both php-fpm (content.php's settings save) and the daemon
 # (launched as fpp unless FPP's own hooks override that) can read/write it.
