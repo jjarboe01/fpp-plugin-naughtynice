@@ -156,10 +156,9 @@ a playlist script entry directly — it dispatches through
 `$FPPDIR/scripts/eventScript`, which for any `.py` file hardcodes
 `exec /usr/bin/python3 "$@"`, ignoring the script's own shebang and
 executable bit entirely. That means this script always runs under the
-bare system `python3`, never this plugin's venv, so it can't rely on
-Pillow (a venv-only dependency used by the *daemon*, which is launched
-differently — see `scripts/postStart.sh`, which invokes the venv python
-explicitly rather than going through `eventScript`). Shelling out to
+bare system `python3`, so it stays stdlib-only rather than relying on
+Pillow (used by the *daemon*, which is launched separately by
+`scripts/postStart.sh`, not through `eventScript`). Shelling out to
 `ffmpeg` (already relied on by FPP itself, and by phase 1's original
 script on this exact hardware) needs nothing beyond the standard library,
 so it's unaffected by which interpreter FPP decides to invoke. An earlier
@@ -200,9 +199,11 @@ plugin), also do the following before reinstalling:
   background process when fppd starts (PID file at
   `nnl_daemon.pid`, same pattern as the Remote Falcon FPP plugin).
 - `scripts/preStart.sh` / `postStop.sh` clean up stale or running instances
-  on start/stop; `fpp_install.sh` creates an isolated Python venv (falls
-  back to `pip3 install --user` if `python3-venv` isn't available) so the
-  plugin's dependencies never conflict with fppd's own Python environment.
+  on start/stop. Dependencies are Debian packages (`python3-requests`,
+  `python3-pil`, `ffmpeg`, `fonts-dejavu-core`): declared in
+  `pluginInfo.json` for FPP 10+, installed by `fpp_install.sh` if missing on
+  FPP 9. No pip/venv (FPP plugin guideline §6); installs from before this
+  change keep using their existing `venv/`.
 - The daemon polls `GET /api/v1/queue` on the configured interval (default
   10s). For each submission it downloads the photo (or falls back to a
   boy/girl silhouette), composites a "breaking news" overlay via Pillow,
@@ -275,4 +276,4 @@ download + silhouette fallback, the exact FPP 9.x array-args command
 format, and a full run of the real daemon entrypoint including graceful
 SIGTERM shutdown. All passed. **Still needed:** a real end-to-end test
 against an actual FPP box and P5 matrix, and a real-hardware check that
-`fpp_install.sh`'s venv creation works on the FPP OS image.
+`fpp_install.sh`'s apt dependency install works on the FPP OS image.

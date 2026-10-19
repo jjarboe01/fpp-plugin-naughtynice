@@ -53,10 +53,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // resize in FPP's own Pixel Overlay Models editor gets picked up).
         // "Full reset" instead deletes and rebuilds both from freshly
         // detected matrix geometry.
+        // Same interpreter choice as scripts/_lib.sh's nnl_python(): a
+        // legacy plugin venv if one exists, otherwise the system python3.
         $venvPython = NNL_PLUGIN_DIR . '/venv/bin/python3';
+        if (!is_executable($venvPython)) {
+            $venvPython = '/usr/bin/python3';
+        }
         $daemonDir = NNL_PLUGIN_DIR . '/daemon';
         if (!is_executable($venvPython)) {
-            $nnlMessage = "Plugin venv not found at $venvPython — reinstall the plugin or install its Python dependencies manually.";
+            $nnlMessage = "python3 not found at $venvPython — install python3, python3-requests and python3-pil.";
             $nnlMessageClass = 'nnl-error';
         } else {
             $forceFlag = isset($_POST['force_recreate']) ? ' --force-recreate' : '';

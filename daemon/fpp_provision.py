@@ -4,8 +4,8 @@ Auto-provisioning for the NaughtyNice Cloud plugin — makes the plugin
 "ready to run" immediately after install instead of requiring the
 customer to hand-build FPP Pixel Overlay Models and a playlist.
 
-Run automatically once by scripts/fpp_install.sh (via the plugin's own
-venv). Can also be re-run any time — from content.php's "Re-run zone
+Run automatically once by scripts/fpp_install.sh (via the system python3,
+or a legacy plugin venv if one exists). Can also be re-run any time — from content.php's "Re-run zone
 setup" button, or manually over SSH — and is safe to call repeatedly:
 
 - If PhotoZone/TickerZone models already exist, their CURRENT on-FPP
