@@ -42,16 +42,96 @@ _COLOR_NAUGHTY = (200, 0, 0)
 _COLOR_WHITE = (255, 255, 255)
 
 
+# Font names FPP's "Text" overlay effect accepts are the bare filename stems
+# of .ttf/.pfb files fppd found at startup under /usr/share/fonts/truetype/,
+# /usr/share/fonts/X11/Type1/ and /usr/local/share/fonts/ (see
+# PixelOverlayManager::loadFonts in FPP's PixelOverlay.cpp) -- e.g.
+# DejaVuSans.ttf -> "DejaVuSans". Which fonts exist varies by FPP image /
+# platform, so hard-coding "DejaVuSans" broke the ticker for customers whose
+# box doesn't ship fonts-dejavu-core ("Could not find font 'DejaVuSans'").
+# We now ask FPP (GET /api/overlays/fonts) and pick the first match below.
+_PREFERRED_TICKER_FONTS = (
+    "DejaVuSans",
+    "DejaVuSans-Bold",
+    "LiberationSans-Regular",
+    "LiberationSans-Bold",
+    "FreeSans",
+    "FreeSansBold",
+    "Arial",
+    "NotoSans-Regular",
+    "Roboto-Regular",
+)
+_TICKER_FONT_CACHE: dict = {}  # base_url -> resolved font name
+
+_PIL_FONT_DIRS = (
+    "/usr/share/fonts/truetype",
+    "/usr/share/fonts/dejavu",
+    "/usr/share/fonts/TTF",
+    "/usr/local/share/fonts",
+    "/usr/share/fonts",
+)
+
+
+def _norm_font(name: str) -> str:
+    return "".join(ch for ch in name.lower() if ch.isalnum())
+
+
+def _pick_font(available, preferred=_PREFERRED_TICKER_FONTS) -> Optional[str]:
+    """Pick the best font from FPP's list: exact preferred match, then a
+    normalized (case/dash-insensitive) preferred match, then any non-mono
+    sans, then anything at all. Returns None only if the list is empty."""
+    fonts = [f for f in (available or []) if isinstance(f, str) and f]
+    if not fonts:
+        return None
+    for want in preferred:
+        if want in fonts:
+            return want
+    by_norm = {_norm_font(f): f for f in fonts}
+    for want in preferred:
+        hit = by_norm.get(_norm_font(want))
+        if hit:
+            return hit
+    sans = sorted(f for f in fonts if "sans" in f.lower() and "mono" not in f.lower())
+    if sans:
+        return sans[0]
+    return sorted(fonts)[0]
+
+
+def _find_font_file(filenames) -> Optional[str]:
+    for base in _PIL_FONT_DIRS:
+        for name in filenames:
+            path = os.path.join(base, name)
+            if os.path.exists(path):
+                return path
+    # Last resort: any sans .ttf anywhere under the font dirs.
+    for base in _PIL_FONT_DIRS:
+        if not os.path.isdir(base):
+            continue
+        for root, _dirs, files in os.walk(base):
+            for f in sorted(files):
+                fl = f.lower()
+                if fl.endswith(".ttf") and "sans" in fl and "mono" not in fl:
+                    return os.path.join(root, f)
+    return None
+
+
 def _get_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
-    name = "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"
-    for base in ("/usr/share/fonts/truetype/dejavu", "/usr/share/fonts/dejavu", "/usr/share/fonts/TTF"):
-        path = os.path.join(base, name)
-        if os.path.exists(path):
-            try:
-                return ImageFont.truetype(path, size)
-            except Exception:
-                pass
-    return ImageFont.load_default()
+    if bold:
+        names = ("DejaVuSans-Bold.ttf", "LiberationSans-Bold.ttf", "FreeSansBold.ttf")
+    else:
+        names = ("DejaVuSans.ttf", "LiberationSans-Regular.ttf", "FreeSans.ttf")
+    path = _find_font_file(names)
+    if path:
+        try:
+            return ImageFont.truetype(path, size)
+        except Exception as exc:
+            log.warning("Could not load font %s: %s", path, exc)
+    log.warning("No TrueType font found for overlay image; using Pillow's built-in font "
+                "(install fonts-dejavu-core for proper rendering)")
+    try:
+        return ImageFont.load_default(size=size)  # Pillow >= 10.1
+    except TypeError:
+        return ImageFont.load_default()
 
 
 def _draw_text_centered(draw, text, font, x0, y0, x1, y1, color) -> None:
@@ -221,6 +301,36 @@ class FPPClient:
             log.error("push_photo_overlay upload exception: %s", exc)
             return False
 
+    def get_ticker_font(self) -> str:
+        """Resolve a font name this FPP box actually has, via
+        GET /api/overlays/fonts (a JSON array of names, or null if fppd found
+        none). Cached per base_url once resolved, since FPPClient is rebuilt
+        every poll loop and fppd only scans fonts at startup."""
+        cached = _TICKER_FONT_CACHE.get(self.base_url)
+        if cached:
+            return cached
+        fallback = _PREFERRED_TICKER_FONTS[0]
+        try:
+            r = requests.get(f"{self.base_url}/api/overlays/fonts", timeout=self.timeout)
+            if r.status_code != 200:
+                log.warning("FPP font list -> HTTP %s; falling back to %s", r.status_code, fallback)
+                return fallback
+            fonts = r.json()
+        except (requests.RequestException, ValueError) as exc:
+            log.warning("FPP font list failed (%s); falling back to %s", exc, fallback)
+            return fallback
+
+        chosen = _pick_font(fonts if isinstance(fonts, list) else [])
+        if not chosen:
+            log.error("FPP reports no fonts installed, so the ticker Text effect cannot render. "
+                      "Fix on the FPP box: 'sudo apt-get install -y fonts-dejavu-core' then a full "
+                      "FPPD restart (plugin page -> Restart FPPD (full)).")
+            return fallback  # don't cache; re-check next time in case fonts get installed
+        if chosen != fallback:
+            log.info("Ticker font %s not on this FPP; using %s", fallback, chosen)
+        _TICKER_FONT_CACHE[self.base_url] = chosen
+        return chosen
+
     def push_ticker_text(self, child_name: str, status: str) -> bool:
         """FPP 9.x command API: args MUST be an array, not a dict."""
         label = status.upper()
@@ -231,7 +341,7 @@ class FPPClient:
             "command": "Overlay Model Effect",
             "args": [
                 self.ticker_model, "Enabled", "Text", color,
-                "DejaVuSans", "16", "false", "Right to Left", "30", "0", message,
+                self.get_ticker_font(), "16", "false", "Right to Left", "30", "0", message,
             ],
         }
         try:
