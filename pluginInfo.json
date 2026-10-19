@@ -9,28 +9,26 @@
 	"iconURL": "https://raw.githubusercontent.com/jjarboe01/fpp-plugin-naughtynice/main/icon.png",
 	"allowUpdates": 1,
 	"releaseNotesStyle": "gitHistory",
+	"dependencies": {
+		"packages": [
+			"python3-requests",
+			"python3-pil",
+			"ffmpeg",
+			"fonts-dejavu-core"
+		]
+	},
 	"versions": [
 		{
 			"minFPPVersion": "9.0",
 			"maxFPPVersion": "9.999",
 			"branch": "main",
-			"sha": "",
-			"dependencies": {
-				"plugins": [],
-				"packages": [],
-				"scripts": []
-			}
+			"sha": ""
 		},
 		{
 			"minFPPVersion": "10.0",
 			"maxFPPVersion": "0",
 			"branch": "main",
-			"sha": "",
-			"dependencies": {
-				"plugins": [],
-				"packages": [],
-				"scripts": []
-			}
+			"sha": ""
 		}
 	],
 	"privacy": {
@@ -67,7 +65,7 @@
 			},
 			{
 				"kind": "download",
-				"what": "Installs requests and Pillow from PyPI into a plugin venv, and the fonts-dejavu-core apt package if it is missing"
+				"what": "Installs python3-requests, python3-pil, ffmpeg and fonts-dejavu-core from Debian (apt) if they are missing"
 			},
 			{
 				"kind": "core-settings",

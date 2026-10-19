@@ -41,8 +41,9 @@ nnl_stop_if_running() {
     fi
 }
 
-# Prefer the venv Python fpp_install.sh created; fall back to system python3
-# if the venv wasn't created (e.g. python3-venv missing on this FPP image).
+# Installs made before the switch to Debian packages have a plugin venv
+# (fpp_install.sh isn't re-run on update) -- keep using it if present.
+# New installs use the system python3 with python3-requests/python3-pil.
 nnl_python() {
     if [ -x "${PLUGIN_DIR}/venv/bin/python3" ]; then
         echo "${PLUGIN_DIR}/venv/bin/python3"
