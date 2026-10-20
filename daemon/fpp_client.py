@@ -149,12 +149,13 @@ def _draw_text_centered(draw, text, font, x0, y0, x1, y1, color) -> None:
 class FPPClient:
     def __init__(self, base_url: str, ticker_model: str, playlist: str,
                  matrix_width: int = 192, photo_zone_height: int = 140,
-                 timeout: int = 5):
+                 ticker_zone_height: int = 52, timeout: int = 5):
         self.base_url = base_url.rstrip("/")
         self.ticker_model = ticker_model
         self.playlist = playlist
         self.matrix_width = matrix_width
         self.photo_zone_height = photo_zone_height
+        self.ticker_zone_height = ticker_zone_height
         self.timeout = timeout
 
     def is_alive(self) -> bool:
@@ -267,14 +268,19 @@ class FPPClient:
         return False
 
     def push_photo_overlay(self, photo: Image.Image, child_name: str, status: str) -> bool:
-        """Composite photo onto a matrix_width x matrix_width canvas with
-        breaking-news overlays, write it to DISPLAY_IMAGE_PATH."""
+        """Composite photo onto a matrix_width x photo_zone_height canvas
+        with breaking-news overlays, write it to DISPLAY_IMAGE_PATH.
+
+        (Was a matrix_width-square canvas, which only worked while the
+        photo zone was no taller than the matrix is wide -- true on the
+        192x192 P5, but not on a tall traditional pixel matrix, where the
+        display script's crop to photo_zone_height rows then failed.)"""
         w = self.matrix_width
         lower_y = self.photo_zone_height - 22 if self.photo_zone_height >= 22 else 0
         badge_x = int(w * 0.635)
 
         try:
-            canvas = Image.new("RGBA", (w, w), (0, 0, 0, 255))
+            canvas = Image.new("RGBA", (w, max(1, self.photo_zone_height)), (0, 0, 0, 255))
             canvas.alpha_composite(photo.convert("RGBA"), (0, 0))
             canvas = canvas.convert("RGB")
             draw = ImageDraw.Draw(canvas)
@@ -353,6 +359,9 @@ class FPPClient:
     def push_ticker_text(self, child_name: str, status: str) -> bool:
         """FPP 9.x command API: args MUST be an array, not a dict."""
         label = status.upper()
+        # 16 is right for the P5's 52px ticker; a short ticker on a small
+        # traditional matrix needs smaller text or it clips top and bottom.
+        font_size = str(max(6, min(16, self.ticker_zone_height - 2)))
         color = "#00FF00" if status == "nice" else "#FF0000"
         message = f"  BREAKING: {child_name} is on Santa's {label} LIST!  "
 
@@ -360,7 +369,7 @@ class FPPClient:
             "command": "Overlay Model Effect",
             "args": [
                 self.ticker_model, "Enabled", "Text", color,
-                self.get_ticker_font(), "16", "false", "Right to Left", "30", "0", message,
+                self.get_ticker_font(), font_size, "false", "Right to Left", "30", "0", message,
             ],
         }
         try:

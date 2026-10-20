@@ -74,10 +74,12 @@ def decode_and_crop(image_path: str, width: int, height: int) -> bytes:
     """Decode the composited PNG and crop to the top `height` rows via
     ffmpeg (no Python imaging library needed — see module docstring for
     why that matters here). The daemon composites onto a
-    matrix_width x matrix_width square canvas (see daemon/fpp_client.py's
-    push_photo_overlay), but only the top photo_zone_height rows are ever
-    meant to reach PhotoZone; the header/status badge are baked into those
-    top rows already."""
+    matrix_width x photo_zone_height canvas (see daemon/fpp_client.py's
+    push_photo_overlay), so the crop is normally a no-op safety net; the
+    header/status badge are baked into those rows already. PhotoZone may be
+    a Channel model or a Sub model of the matrix (traditional pixel
+    matrices) -- its overlay buffer is width x height RGB either way, and
+    fppd maps it through the matrix's wiring, so nothing here differs."""
     proc = subprocess.run(
         ["ffmpeg", "-i", image_path,
          "-f", "rawvideo", "-pix_fmt", "rgb24",

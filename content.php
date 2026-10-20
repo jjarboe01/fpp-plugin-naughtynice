@@ -67,8 +67,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $forceFlag = isset($_POST['force_recreate']) ? ' --force-recreate' : '';
             $dryRun = isset($_POST['dry_run']);
             $dryFlag = $dryRun ? ' --dry-run' : '';
+            // Matrix picker. Python rebuilds the zones onto it if they aren't
+            // on it already, so picking a matrix + this button is the whole job.
+            $matrixFlag = '';
+            if (isset($_POST['matrix_model']) && trim($_POST['matrix_model']) !== '') {
+                $matrixFlag = ' --matrix-model ' . escapeshellarg(trim($_POST['matrix_model']));
+            }
             $cmd = 'cd ' . escapeshellarg($daemonDir) . ' && ' .
-                   escapeshellarg($venvPython) . ' fpp_provision.py' . $forceFlag . $dryFlag . ' 2>&1';
+                   escapeshellarg($venvPython) . ' fpp_provision.py' . $forceFlag . $dryFlag . $matrixFlag . ' 2>&1';
             $output = shell_exec($cmd);
 
             if ($dryRun) {
@@ -104,6 +110,45 @@ $nnlSettings = nnl_load_settings();
 $nnlStatus = nnl_read_status();
 $nnlActive = nnl_active_env($nnlSettings);
 $actionUrl = htmlspecialchars($_SERVER['REQUEST_URI']);
+
+// Matrix picker candidates, from the same Python module that provisions the
+// zones (one source of truth for geometry and LED-panel matching). Read-only.
+$nnlCandidates = array();
+$nnlCandidatesError = '';
+$nnlPy = NNL_PLUGIN_DIR . '/venv/bin/python3';
+if (!is_executable($nnlPy)) {
+    $nnlPy = '/usr/bin/python3';
+}
+if (is_executable($nnlPy)) {
+    $listOut = shell_exec('cd ' . escapeshellarg(NNL_PLUGIN_DIR . '/daemon') . ' && ' .
+                          escapeshellarg($nnlPy) . ' fpp_provision.py --list-models 2>/dev/null');
+    $listParsed = json_decode(trim((string)$listOut), true);
+    if (is_array($listParsed) && !empty($listParsed['ok'])) {
+        $nnlCandidates = $listParsed['candidates'];
+    } else {
+        $nnlCandidatesError = is_array($listParsed) && !empty($listParsed['message'])
+            ? $listParsed['message'] : 'Could not list FPP models.';
+    }
+}
+$nnlSelectedMatrix = $nnlSettings['matrix_model'];
+$nnlHasDefaultCandidates = false;
+foreach ($nnlCandidates as $c) {
+    if (!empty($c['tags'])) { $nnlHasDefaultCandidates = true; break; }
+}
+
+function nnl_candidate_label($c) {
+    $kinds = array();
+    if (in_array('led_panel', $c['tags'])) { $kinds[] = 'LED panel'; }
+    if (in_array('name_match', $c['tags']) && !in_array('led_panel', $c['tags'])) { $kinds[] = 'pixel matrix'; }
+    if (!empty($c['auto_created'])) { $kinds[] = 'auto-created by FPP'; }
+    if (!empty($c['missing_model'])) { $kinds[] = 'no model yet — will be created'; }
+    if ($c['zone_type'] === 'Sub') {
+        $kinds[] = (stripos((string)$c['orientation'], 'v') === 0 ? 'vertical' : 'horizontal') .
+                   ((int)$c['strands_per_string'] > 1 ? ' zig-zag' : '') . ', starts ' . $c['start_corner'];
+    }
+    return $c['name'] . ' — ' . $c['width'] . ' x ' . $c['height'] . ' px' .
+           ($kinds ? ' (' . implode(', ', $kinds) . ')' : '');
+}
 ?>
 <style>
   .nnl-box { max-width: 640px; }
@@ -186,6 +231,7 @@ $actionUrl = htmlspecialchars($_SERVER['REQUEST_URI']);
   <fieldset>
     <legend>Zone setup</legend>
     <table class="nnl-status-table">
+      <tr><td>Matrix model:</td><td><?php echo htmlspecialchars($nnlSettings['matrix_model'] !== '' ? $nnlSettings['matrix_model'] : 'auto-detect'); ?></td></tr>
       <tr><td>Matrix size:</td><td><?php echo htmlspecialchars($nnlSettings['matrix_width']); ?> x <?php echo htmlspecialchars($nnlSettings['matrix_height']); ?> px</td></tr>
       <tr><td>Photo zone:</td><td><?php echo htmlspecialchars($nnlSettings['photo_model']); ?> — <?php echo htmlspecialchars($nnlSettings['matrix_width']); ?> x <?php echo htmlspecialchars($nnlSettings['photo_zone_height']); ?> px</td></tr>
       <tr><td>Ticker zone:</td><td><?php echo htmlspecialchars($nnlSettings['ticker_model']); ?> — <?php echo htmlspecialchars($nnlSettings['matrix_width']); ?> x <?php echo htmlspecialchars($nnlSettings['ticker_zone_height']); ?> px</td></tr>
@@ -204,6 +250,48 @@ $actionUrl = htmlspecialchars($_SERVER['REQUEST_URI']);
 
     <form method="post" action="<?php echo $actionUrl; ?>" style="display:inline;">
       <input type="hidden" name="nnl_action" value="provision">
+
+      <label for="nnl_matrix_model">Matrix to show submissions on</label>
+      <?php if ($nnlCandidatesError): ?>
+        <p class="nnl-msg nnl-error"><?php echo htmlspecialchars($nnlCandidatesError); ?></p>
+      <?php endif; ?>
+      <select id="nnl_matrix_model" name="matrix_model" style="max-width:100%;">
+        <option value="" data-tags="always" <?php echo $nnlSelectedMatrix === '' ? 'selected' : ''; ?>>Auto-detect (largest model)</option>
+        <?php foreach ($nnlCandidates as $c):
+            $isSel = $c['name'] === $nnlSelectedMatrix; ?>
+          <option value="<?php echo htmlspecialchars($c['name']); ?>"
+                  data-tags="<?php echo htmlspecialchars($isSel ? 'always' : implode(' ', $c['tags'])); ?>"
+                  <?php echo $isSel ? 'selected' : ''; ?>>
+            <?php echo htmlspecialchars(nnl_candidate_label($c)); ?></option>
+        <?php endforeach; ?>
+      </select>
+      <br>
+      <label style="display:inline; font-weight:normal;">
+        <input type="checkbox" id="nnl_show_all_models" <?php echo $nnlHasDefaultCandidates ? '' : 'checked'; ?>>
+        Show all models (if your matrix doesn't have "matrix" in its name)
+      </label>
+      <p><small>Lists every LED panel matrix plus any model with "matrix" in its name. Traditional pixel
+        matrices work too: if the matrix isn't wired as left-to-right rows from the top-left (vertical strings,
+        zig-zag, other start corners), the photo and ticker zones are created as <em>sub-models</em> of it so FPP
+        maps them through your wiring. Picking a different matrix and clicking "Re-run zone setup" rebuilds the
+        zones on it — try a dry run first.</small></p>
+      <script>
+        (function () {
+          var sel = document.getElementById('nnl_matrix_model');
+          var all = document.getElementById('nnl_show_all_models');
+          function apply() {
+            for (var i = 0; i < sel.options.length; i++) {
+              var o = sel.options[i];
+              var show = all.checked || o.getAttribute('data-tags') !== '';
+              o.hidden = !show;
+              o.disabled = !show;
+            }
+          }
+          all.addEventListener('change', apply);
+          apply();
+        })();
+      </script>
+
       <label style="display:inline; font-weight:normal;">
         <input type="checkbox" name="force_recreate" style="width:auto;"> Full reset (delete &amp; rebuild both zones from scratch)
       </label>
