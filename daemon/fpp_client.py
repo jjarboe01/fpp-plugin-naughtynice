@@ -207,32 +207,29 @@ class FPPClient:
             log.error("break_in_playlist exception: %s", exc)
             return False
 
-    def break_in_and_sync(self, name: Optional[str] = None, timeout: float = 5.0,
-                           poll_interval: float = 0.25) -> bool:
-        """Break into `name` (or self.playlist) and block until FPP confirms
-        the playlist is actually the active one before returning.
+    def break_in_and_sync(self, name: Optional[str] = None, expect_photo: bool = True,
+                          timeout: float = 12.0, poll_interval: float = 0.25) -> bool:
+        """Break into `name` (or self.playlist) and block until there is proof
+        the playlist actually ran, so the ticker starts with the visual and a
+        submission is only acked when it was really shown.
 
-        Why this exists: break_in_playlist() only confirms fppd *accepted*
-        the start command over HTTP -- it does not mean the matrix is
-        actually outputting that content yet. fppd needs a beat to stop
-        whatever was running and load the new playlist/media, and that gap
-        was measurably a couple of seconds on the real Pi 5. Meanwhile
-        push_ticker_text() is an "Overlay Model Effect" command applied on
-        a separate render path (TickerZone), which takes effect essentially
-        immediately. Calling the two back-to-back without this wait meant
-        the ticker text started scrolling visibly before the photo/
-        background playlist appeared -- reported by Joe as "text scrolling
-        started before the rest of the screen rendered by a few seconds."
+        Why a 200 from break_in_playlist() isn't enough: fppd answers the
+        start request even when it then drops it -- 2026-10-19 on FPP 10.2,
+        a start sent ~0.3s before fppd's main loop came up was never run, yet
+        the submission was acked as delivered.
 
-        Polls GET /api/system/status (see _fetch_status) and watches its
-        "playlist" field for the target name -- confirmed via a live status
-        dump that this field is empty when no playlist is the active
-        selection and becomes the playlist's name once fppd has actually
-        switched to it. If FPP never reports the switch within `timeout`,
-        logs a warning and returns True anyway (the break-in call itself
-        succeeded, so we don't want a flaky status poll to nack an
-        otherwise-working submission) -- worst case, sync degrades back to
-        the old race instead of the item failing outright.
+        Proof, in order of preference:
+        - Photo submissions: the display script (the playlist's "script"
+          entry) deletes DISPLAY_IMAGE_PATH right after decoding it, just
+          before it enables PhotoZone. The file disappearing is direct proof
+          our playlist ran, in every FPP version and mode.
+        - Otherwise: GET /api/system/status "playlist" == target (FPP 9, and
+          player mode). FPP 10 in remote mode leaves that field '' even while
+          playing, so for text-only submissions status_name == "playing" is
+          accepted as the best signal available there.
+
+        No proof within `timeout` -> False, so the caller nacks the item (the
+        cloud retries it) instead of acking something nobody saw.
         """
         target = name or self.playlist
         if not self.break_in_playlist(target):
@@ -240,18 +237,34 @@ class FPPClient:
 
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            status = self._fetch_status()
-            if status is not None and status.get("playlist") == target:
-                log.info("Confirmed FPP switched to playlist %s before signaling ticker", target)
+            if expect_photo and not os.path.exists(DISPLAY_IMAGE_PATH):
+                log.info("Display script picked up the photo -- playlist %s is running", target)
                 return True
+            status = self._fetch_status()
+            if status is not None:
+                if status.get("playlist") == target:
+                    log.info("FPP reports playlist %s active", target)
+                    return True
+                if not expect_photo and status.get("status_name") == "playing":
+                    log.info("FPP reports playing (playlist name not exposed in this mode)")
+                    return True
             time.sleep(poll_interval)
 
-        log.warning(
-            "break_in_and_sync: FPP never reported playlist=%s as active within %.1fs -- "
-            "proceeding anyway, ticker text may start slightly ahead of the visual",
-            target, timeout,
-        )
-        return True
+        log.error("break_in_and_sync: no sign playlist %s ran within %.0fs -- will nack", target, timeout)
+        return False
+
+    def wait_until_ready(self, settle_seconds: float = 10.0, max_wait: float = 120.0) -> bool:
+        """Block until fppd answers its status API, then a further
+        `settle_seconds`. The daemon is launched by postStart.sh at the same
+        moment fppd starts, and fppd's HTTP API answers before its main loop
+        is running -- commands sent in that gap are silently dropped."""
+        deadline = time.monotonic() + max_wait
+        while time.monotonic() < deadline:
+            if self._fetch_status() is not None:
+                time.sleep(settle_seconds)
+                return True
+            time.sleep(2)
+        return False
 
     def push_photo_overlay(self, photo: Image.Image, child_name: str, status: str) -> bool:
         """Composite photo onto a matrix_width x matrix_width canvas with
