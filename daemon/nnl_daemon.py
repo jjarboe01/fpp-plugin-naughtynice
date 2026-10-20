@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from cloud_client import CloudApiError, CloudClient, InvalidToken, LicenseExpired
 from config import load_settings, read_status, write_status
 from fpp_client import DISPLAY_IMAGE_PATH, FPPClient
+from fpp_provision import ensure_script_entry_blocking
 from image_processor import prepare_display_image
 
 logging.basicConfig(
@@ -112,6 +113,12 @@ def run() -> None:
     startup = load_settings()
     if not FPPClient(startup.fpp_base_url, startup.ticker_model, startup.playlist).wait_until_ready():
         log.warning("FPP status API not answering after startup wait -- continuing anyway")
+
+    # Plugin updates don't re-run fpp_install.sh, so existing installs get the
+    # "blocking" fix for their breaking_news playlist here, once per start.
+    note = ensure_script_entry_blocking(startup.fpp_base_url, startup.playlist)
+    if note:
+        log.info(note)
 
     while not _stop:
         settings = load_settings()
