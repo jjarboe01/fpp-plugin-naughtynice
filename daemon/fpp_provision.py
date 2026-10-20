@@ -201,11 +201,31 @@ def _find_main_matrix_model(models: list, exclude_names: set) -> dict:
     return max(candidates, key=lambda m: (not m.get("autoCreated", False), m.get("ChannelCount", 0)))
 
 
-def _next_start_channel(models: list) -> int:
-    if not models:
-        return 1
-    ends = [m.get("StartChannel", 0) + m.get("ChannelCount", 0) for m in models]
-    return max(ends) + 1 if ends else 1
+def _zone_starts(main: dict, width: int, photo_h: int, cpn: int = 3) -> tuple:
+    """PhotoZone/TickerZone are OVERLAYS on the main matrix: they must share
+    its channels, PhotoZone on the top `photo_h` rows starting at the
+    matrix's own StartChannel and TickerZone on the rows right after it.
+
+    (The original version placed each zone after the end of every existing
+    model -- i.e. on channels no output ever sends -- so FPP rendered the
+    photo and ticker into thin air and the matrix stayed blank. Found
+    2026-10-19 on the FPP 10.2 Pi: matrix 62031-172622, zones at 172624+.)"""
+    photo_start = main.get("StartChannel", 1)
+    ticker_start = photo_start + width * photo_h * cpn
+    return photo_start, ticker_start
+
+
+def _zones_misplaced(main: dict, photo: dict, ticker: dict) -> bool:
+    """True if either zone falls outside the main matrix model's channels."""
+    if not main:
+        return False
+    lo = main.get("StartChannel", 0)
+    hi = lo + main.get("ChannelCount", 0)  # exclusive
+    for z in (photo, ticker):
+        start = z.get("StartChannel", 0)
+        if start < lo or start + z.get("ChannelCount", 0) > hi:
+            return True
+    return False
 
 
 def provision(settings: Settings, force_recreate: bool = False, dry_run: bool = False) -> dict:
@@ -266,8 +286,11 @@ def provision(settings: Settings, force_recreate: bool = False, dry_run: bool = 
         settings.photo_zone_height = photo_h
         settings.ticker_zone_height = ticker_h
         settings.matrix_height = photo_h + ticker_h
+        main = _find_main_matrix_model(other_models, exclude_names={photo_name, ticker_name})
+        misplaced = _zones_misplaced(main, photo, ticker)
         result.update({
-            "ok": True,
+            "ok": not misplaced,
+            "zones_misplaced": misplaced,
             "synced_from_existing": True,
             "matrix_width": settings.matrix_width,
             "matrix_height": settings.matrix_height,
@@ -276,6 +299,13 @@ def provision(settings: Settings, force_recreate: bool = False, dry_run: bool = 
             "message": f"{photo_name}/{ticker_name} already existed on FPP — synced settings to match "
                        f"their current size ({settings.matrix_width}x{settings.matrix_height}).",
         })
+        if misplaced:
+            result["message"] += (
+                f" PROBLEM: {photo_name}/{ticker_name} are not on the channels of your matrix model "
+                f"'{main.get('Name')}' (channels {main.get('StartChannel')}-"
+                f"{main.get('StartChannel', 0) + main.get('ChannelCount', 0) - 1}), so nothing they draw "
+                f"reaches the panels. Re-run zone setup with \"Full reset\" checked to fix."
+            )
     else:
         main = _find_main_matrix_model(other_models, exclude_names={photo_name, ticker_name})
         if not main:
@@ -298,17 +328,15 @@ def provision(settings: Settings, force_recreate: bool = False, dry_run: bool = 
         ticker_h = max(1, total_height - photo_h)
 
         new_models = []
-        # Build the final desired list incrementally, always computing the
-        # next free start channel against what's ALREADY in the list (so
-        # existing entries — including a partially-provisioned prior run —
-        # are never overlapped, and force-recreate reuses freed address
-        # space instead of drifting upward forever).
+        # Zones overlay the main matrix's own channels (see _zone_starts);
+        # every other existing model is preserved untouched.
         final_models = list(other_models)
+
+        photo_start, ticker_start = _zone_starts(main, total_width, photo_h, cpn)
 
         if have_photo:
             final_models.append(by_name[photo_name])
         else:
-            photo_start = _next_start_channel(final_models)
             photo_entry = _model_payload(photo_name, photo_start, total_width, photo_h)
             new_models.append(photo_entry)
             final_models.append(photo_entry)
@@ -316,7 +344,6 @@ def provision(settings: Settings, force_recreate: bool = False, dry_run: bool = 
         if have_ticker:
             final_models.append(by_name[ticker_name])
         else:
-            ticker_start = _next_start_channel(final_models)
             ticker_entry = _model_payload(ticker_name, ticker_start, total_width, ticker_h)
             new_models.append(ticker_entry)
             final_models.append(ticker_entry)
