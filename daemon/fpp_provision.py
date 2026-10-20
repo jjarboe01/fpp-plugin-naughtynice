@@ -349,12 +349,60 @@ def save_playlist(base_url: str, name: str, script_name: str) -> None:
         "random": 0,
         "leadIn": [],
         "mainPlaylist": [
-            {"type": "script", "enabled": 1, "playOnce": 0, "scriptName": script_name, "scriptArgs": ""}
+            # blocking: FPP's script entry defaults to fire-and-forget --
+            # without this the entry "finishes" the instant the script is
+            # launched, the one-entry playlist ends a few ms later, and the
+            # daemon (and any interrupted playlist waiting to resume) never
+            # sees it run. See ensure_script_entry_blocking().
+            {"type": "script", "enabled": 1, "playOnce": 0, "blocking": True,
+             "scriptName": script_name, "scriptArgs": ""}
         ],
         "leadOut": [],
     }
     r = requests.post(_api(base_url, f"/api/playlist/{name}"), json=payload, timeout=TIMEOUT)
     r.raise_for_status()
+
+
+def ensure_script_entry_blocking(base_url: str, name: str, script_name: str = "nnl_display_image.py",
+                                 dry_run: bool = False) -> str:
+    """Migration for playlists created before "blocking" was set (every
+    install up to and including PR #6): flip our display-script entry to
+    blocking in place, leaving every other entry and setting exactly as the
+    user has it. Returns a short note for the caller to log/show, or "" if
+    nothing needed changing.
+
+    Why it matters (found 2026-10-20 from a user's FPP 10.2 log):
+    PlaylistEntryScript::StartPlaying() calls FinishPlay() right after
+    launching a non-blocking script, so breaking_news started and ended
+    within one fppd tick. Photo submissions still showed (the script runs
+    on regardless) but text-only ones were nacked -- nothing to observe --
+    and the show it interrupted was left stopped."""
+    try:
+        r = requests.get(_api(base_url, f"/api/playlist/{name}"), timeout=TIMEOUT)
+        r.raise_for_status()
+        pl = r.json()
+    except (requests.RequestException, ValueError) as exc:
+        return f"Could not read playlist '{name}' to check its script entry: {exc}"
+    if not isinstance(pl, dict):
+        return ""
+
+    changed = 0
+    for section in ("leadIn", "mainPlaylist", "leadOut"):
+        for entry in pl.get(section) or []:
+            if (isinstance(entry, dict) and entry.get("type") == "script"
+                    and entry.get("scriptName") == script_name and not entry.get("blocking")):
+                entry["blocking"] = True
+                changed += 1
+    if not changed:
+        return ""
+    if dry_run:
+        return f"[DRY RUN] Would set 'Blocking' on the {script_name} entry of playlist '{name}'."
+    try:
+        w = requests.post(_api(base_url, f"/api/playlist/{name}"), json=pl, timeout=TIMEOUT)
+        w.raise_for_status()
+    except requests.RequestException as exc:
+        return f"Failed to set 'Blocking' on the {script_name} entry of playlist '{name}': {exc}"
+    return f"Set 'Blocking' on the {script_name} entry of playlist '{name}'."
 
 
 def _find_main_matrix_model(models: list, exclude_names: set, preferred: str = "") -> dict:
@@ -647,6 +695,10 @@ def provision(settings: Settings, force_recreate: bool = False, dry_run: bool = 
                 result["message"] += f" Created playlist '{playlist_name}' (script: {script_name})."
             except requests.RequestException as exc:
                 result["message"] += f" Warning: failed to create playlist '{playlist_name}': {exc}"
+    elif playlists is not None:
+        note = ensure_script_entry_blocking(base_url, playlist_name, script_name, dry_run=dry_run)
+        if note:
+            result["message"] += " " + note
 
     if not dry_run and result.get("created_models"):
         result["message"] += (" A restart of fppd is required for these model changes to take "

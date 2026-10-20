@@ -10,7 +10,9 @@ FPP API docs: http://<fpp-host>/api/help
 
 Notable FPP 9.x quirks (learned the hard way in phase 1 — see git history of
 LightShow-NaughtyNice for the FPP 6.x-assumption bugs these fixed):
-- Playlist start: GET /api/playlist/{name}/start  (singular; /api/playlists/ is list-only)
+- Break-in: "Insert Playlist Immediate" command (pauses + resumes the
+  running show); the old GET /api/playlist/{name}/start stopped it for good
+- Playlist proof: GET /api/player/current (works in player AND remote mode)
 - Command API: args must be an ARRAY, not a dict
 - Photo display: composite onto background, write the PNG into this
   plugin's plugindata dir; scripts/nnl_display_image.py (a playlist "script"
@@ -193,14 +195,27 @@ class FPPClient:
             return None
 
     def break_in_playlist(self, name: Optional[str] = None) -> bool:
-        """GET /api/playlist/{name}/start — SINGULAR. Breaks in from whatever
-        is currently playing; FPP resumes normal sync when it ends."""
+        """Run `name` (or self.playlist) NOW, via FPP's "Insert Playlist
+        Immediate" command: if a playlist is running, fppd pauses it, plays
+        ours, then resumes it where it left off; if idle, it just plays ours.
+
+        This used to be GET /api/playlist/{name}/start ("Start Playlist"),
+        which StopNow()s whatever is running and never brings it back -- fine
+        on a matrix-only box, but it killed the rest of the show for users
+        whose FPP also drives other props.
+
+        Caveat (FPP's behaviour, not ours): "immediate" means as soon as the
+        current item can pause. Sequences and media pause instantly; an item
+        that can't pause (e.g. a script or pause entry) runs to its end first.
+
+        A True here only means fppd accepted the command -- it says nothing
+        about whether the playlist ran. break_in_and_sync() checks that."""
         target = name or self.playlist
-        url = f"{self.base_url}/api/playlist/{target}/start"
+        payload = {"command": "Insert Playlist Immediate", "args": [target, "0", "0", "false"]}
         try:
-            r = requests.get(url, timeout=self.timeout)
-            if r.status_code == 200:
-                log.info("Started FPP playlist: %s", target)
+            r = requests.post(f"{self.base_url}/api/command", json=payload, timeout=self.timeout)
+            if r.status_code in (200, 204):
+                log.info("Requested FPP playlist insert: %s (not yet confirmed running)", target)
                 return True
             log.error("break_in_playlist %s -> HTTP %s: %s", target, r.status_code, r.text[:200])
             return False
@@ -208,26 +223,57 @@ class FPPClient:
             log.error("break_in_playlist exception: %s", exc)
             return False
 
+    def _current_playlist(self) -> Optional[str]:
+        """Name of the playlist fppd is actually running right now, or "" if
+        none, or None if this FPP can't tell us.
+
+        GET /api/player/current -> {"playlist": {"name", "currentState"}} is
+        the Player's own view, in BOTH player and remote mode (verified on
+        FPP 10.2 in remote mode, 2026-10-20) -- unlike /api/system/status,
+        whose top-level "playlist" holds the *sequence* filename in remote
+        mode and is absent in player mode. An inserted playlist becomes the
+        Player's current one, so this names breaking_news while it plays.
+
+        Falls back to /api/system/status for FPPs without /api/player:
+        "current_playlist.playlist" (player mode), then top-level "playlist"
+        (what FPP 9 reported, per the 2026-07-04 tests)."""
+        try:
+            r = requests.get(f"{self.base_url}/api/player/current", timeout=self.timeout)
+            if r.status_code == 200:
+                pl = (r.json() or {}).get("playlist") or {}
+                if isinstance(pl, dict) and "name" in pl:
+                    state = str(pl.get("currentState", "")).lower()
+                    return (pl.get("name") or "") if state not in ("idle", "") else ""
+        except (requests.RequestException, ValueError):
+            pass
+
+        status = self._fetch_status()
+        if status is None:
+            return None
+        cur = status.get("current_playlist")
+        if isinstance(cur, dict) and cur.get("playlist"):
+            return cur["playlist"]
+        top = status.get("playlist")
+        return top if isinstance(top, str) else ""
+
     def break_in_and_sync(self, name: Optional[str] = None, expect_photo: bool = True,
                           timeout: float = 12.0, poll_interval: float = 0.25) -> bool:
         """Break into `name` (or self.playlist) and block until there is proof
         the playlist actually ran, so the ticker starts with the visual and a
         submission is only acked when it was really shown.
 
-        Why a 200 from break_in_playlist() isn't enough: fppd answers the
-        start request even when it then drops it -- 2026-10-19 on FPP 10.2,
-        a start sent ~0.3s before fppd's main loop came up was never run, yet
-        the submission was acked as delivered.
+        Accepted proof -- and nothing weaker:
+        - Photo submissions: the display script (the playlist's script
+          entry) deletes DISPLAY_IMAGE_PATH right after decoding it. The file
+          disappearing proves our playlist ran, in every FPP version and mode.
+        - Any submission: fppd names the target as its current playlist (see
+          _current_playlist()).
 
-        Proof, in order of preference:
-        - Photo submissions: the display script (the playlist's "script"
-          entry) deletes DISPLAY_IMAGE_PATH right after decoding it, just
-          before it enables PhotoZone. The file disappearing is direct proof
-          our playlist ran, in every FPP version and mode.
-        - Otherwise: GET /api/system/status "playlist" == target (FPP 9, and
-          player mode). FPP 10 in remote mode leaves that field '' even while
-          playing, so for text-only submissions status_name == "playing" is
-          accepted as the best signal available there.
+        A bare status_name == "playing" is NOT proof and is no longer
+        accepted. It used to be, for text-only submissions, and gave a false
+        positive (2026-10-20): breaking_news had already ended, the user
+        restarted their own Halloween playlist, "playing" appeared, and the
+        submission was acked as delivered though breaking_news never showed.
 
         No proof within `timeout` -> False, so the caller nacks the item (the
         cloud retries it) instead of acking something nobody saw.
@@ -241,17 +287,14 @@ class FPPClient:
             if expect_photo and not os.path.exists(DISPLAY_IMAGE_PATH):
                 log.info("Display script picked up the photo -- playlist %s is running", target)
                 return True
-            status = self._fetch_status()
-            if status is not None:
-                if status.get("playlist") == target:
-                    log.info("FPP reports playlist %s active", target)
-                    return True
-                if not expect_photo and status.get("status_name") == "playing":
-                    log.info("FPP reports playing (playlist name not exposed in this mode)")
-                    return True
+            current = self._current_playlist()
+            if current == target:
+                log.info("FPP reports playlist %s running", target)
+                return True
             time.sleep(poll_interval)
 
-        log.error("break_in_and_sync: no sign playlist %s ran within %.0fs -- will nack", target, timeout)
+        log.error("break_in_and_sync: no sign playlist %s ran within %.0fs -- will nack. If FPP's own "
+                  "log shows it starting, check that its script entry is Blocking.", target, timeout)
         return False
 
     def wait_until_ready(self, settle_seconds: float = 10.0, max_wait: float = 120.0) -> bool:

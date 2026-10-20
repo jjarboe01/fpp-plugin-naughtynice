@@ -103,6 +103,16 @@ def main() -> int:
     #    on disk before we read it.
     time.sleep(UPLOAD_SETTLE_SECONDS)
 
+    # Text-only submission (text_only plan, or the photo was already cleared):
+    # there's nothing to draw, but this script IS the playlist's hold time --
+    # the entry is blocking, so returning early would end breaking_news at
+    # once and resume the interrupted show under the ticker. Hold, then exit
+    # cleanly. (It used to fall through to ffmpeg, fail to decode the missing
+    # file and exit 1 within a second.)
+    if not os.path.exists(IMAGE_PATH):
+        time.sleep(duration)
+        return 0
+
     # 1. Force-create the shared memory overlay buffer WITHOUT enabling the
     #    zone yet. The buffer persists between runs and still holds the
     #    previous image — we must write the new one in before enabling, so

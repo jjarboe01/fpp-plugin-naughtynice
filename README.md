@@ -123,7 +123,10 @@ Models or a playlist first:
   FPP would auto-create.
 - `python3 daemon/fpp_provision.py --list-models` prints the picker's
   candidates as JSON (read-only).
-- Creates a `breaking_news` playlist with a single **script** entry
+- Creates a `breaking_news` playlist with a single **blocking script** entry
+  (blocking matters: FPP's default fire-and-forget script entry ends the
+  playlist the instant the script launches; the daemon also flips this on
+  for playlists created by older versions, once per start)
   pointing at `nnl_display_image.py` (deployed to
   `/home/fpp/media/scripts/` by `fpp_install.sh`). Holds the display for
   `display_duration_seconds` (default 20s) then hands control back.
@@ -228,8 +231,11 @@ plugin), also do the following before reinstalling:
   writes it to `/home/fpp/media/plugindata/fpp-plugin-naughtynice/current_display.png`
   (the display script deletes it once it's on the matrix; any failed delivery
   deletes it too), breaks
-  into the configured playlist (`GET /api/playlist/{name}/start`), and
-  triggers the ticker text effect (`POST /api/command`, `Overlay Model
+  into the configured playlist with FPP's `Insert Playlist Immediate`
+  command (the running show is paused, then resumes where it left off),
+  waits for proof it is actually running (the photo file being picked up,
+  or `GET /api/player/current` naming the playlist — a bare "playing"
+  status is not accepted), and triggers the ticker text effect (`POST /api/command`, `Overlay Model
   Effect` / `Text`). Success -> ack; any failure -> nack (cloud expires the
   item after 3 nacks).
 - Each poll also reports plugin + FPP version to the cloud (`POST
