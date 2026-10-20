@@ -17,6 +17,16 @@ if [ -f "$PIDFILE" ]; then
     exit 0
 fi
 
+# fpp_install.sh only runs on first install, so refresh the display script
+# FPP's playlist runs from its scripts directory whenever the plugin's copy
+# has changed (i.e. after a plugin update).
+SRC_SCRIPT="${PLUGIN_DIR}/scripts/nnl_display_image.py"
+DST_SCRIPT=/home/fpp/media/scripts/nnl_display_image.py
+if [ -f "$SRC_SCRIPT" ] && ! cmp -s "$SRC_SCRIPT" "$DST_SCRIPT"; then
+    cp "$SRC_SCRIPT" "$DST_SCRIPT" && chmod 755 "$DST_SCRIPT"
+    chown fpp:fpp "$DST_SCRIPT" 2>/dev/null || true
+fi
+
 PYTHON_BIN="$(nnl_python)"
 mkdir -p "$(dirname "$LOGFILE")"
 

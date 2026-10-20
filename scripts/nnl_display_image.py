@@ -52,7 +52,7 @@ PIXEL_OFFSET = 12  # byte offset where RGB data begins in the overlay buffer
 FLAGS_OFFSET = 8   # byte offset of the dirty-flag uint32_t
 DATA_DIR = "/home/fpp/media/plugindata/fpp-plugin-naughtynice"
 IMAGE_PATH = os.path.join(DATA_DIR, "current_display.png")
-UPLOAD_SETTLE_SECONDS = 3  # give the daemon's just-finished write a moment to land
+UPLOAD_SETTLE_SECONDS = 0.5  # daemon writes atomically (tmp + rename), so only a brief pause is needed
 
 
 def fpp_cmd(base_url: str, command: str, args: list) -> None:

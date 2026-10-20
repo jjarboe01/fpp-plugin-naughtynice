@@ -31,7 +31,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("nnl_daemon")
 
-PLUGIN_VERSION = "0.3.4"
+PLUGIN_VERSION = "0.3.5"
 MAX_BACKOFF_SECONDS = 300
 
 _stop = False
@@ -69,12 +69,9 @@ def _process_item(cloud: CloudClient, fpp: FPPClient, item: dict, matrix_width: 
             # No photo zone to render into — just break in and scroll the
             # ticker text. Skips photo download/compositing/upload entirely
             # so text-only shows have no dependency on a PhotoZone model.
-            # break_in_and_sync (not break_in_playlist) waits for FPP to
-            # confirm the playlist actually switched before the ticker
-            # fires — see its docstring for why (fppd's own start-up lag
-            # vs. the ticker's near-instant overlay command was causing the
-            # text to visibly start before the background playlist did).
-            ok = fpp.break_in_and_sync()
+            # break_in_and_sync waits for proof the playlist ran before the
+            # ticker fires, and returns False (-> nack) if there is none.
+            ok = fpp.break_in_and_sync(expect_photo=False)
             ok = ok and fpp.push_ticker_text(item["child_name"], item["verdict"])
         else:
             photo_bytes = None
@@ -84,7 +81,7 @@ def _process_item(cloud: CloudClient, fpp: FPPClient, item: dict, matrix_width: 
             display_img = prepare_display_image(photo_bytes, item.get("gender"), matrix_width, photo_zone_height)
 
             ok = fpp.push_photo_overlay(display_img, item["child_name"], item["verdict"])
-            ok = ok and fpp.break_in_and_sync()
+            ok = ok and fpp.break_in_and_sync(expect_photo=True)
             ok = ok and fpp.push_ticker_text(item["child_name"], item["verdict"])
 
         if ok:
@@ -108,6 +105,13 @@ def run() -> None:
 
     items_processed_total = read_status().get("items_processed_total", 0)
     backoff_seconds = 1
+
+    # postStart.sh launches us the moment fppd starts; give fppd time to get
+    # its main loop running before sending it anything (see
+    # FPPClient.wait_until_ready).
+    startup = load_settings()
+    if not FPPClient(startup.fpp_base_url, startup.ticker_model, startup.playlist).wait_until_ready():
+        log.warning("FPP status API not answering after startup wait -- continuing anyway")
 
     while not _stop:
         settings = load_settings()
