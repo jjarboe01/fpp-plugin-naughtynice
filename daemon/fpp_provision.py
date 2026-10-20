@@ -17,6 +17,11 @@ setup" button, or manually over SSH — and is safe to call repeatedly:
   auto-detected matrix geometry (e.g. after swapping to a
   different-size matrix). This is destructive to any manual zone sizing
   and is only done when explicitly requested.
+- The matrix is settings.matrix_model (picked on the setup page, or
+  --matrix-model). Zones are Channel models on the matrix's own channels
+  when its rows are contiguous channel runs (LED panels), otherwise FPP
+  "Sub" models of it (traditional pixel matrices). --list-models prints
+  the picker's candidates.
 - The playlist (single script entry, no pause needed — the script
   itself sleeps for display_duration_seconds before returning) is only
   ever CREATED if missing, never overwritten, so any manual
@@ -102,6 +107,158 @@ def get_models(base_url: str) -> list:
     return data if isinstance(data, list) else []
 
 
+def get_live_models(base_url: str) -> dict:
+    """GET /api/overlays/models -> {name: model} as fppd actually loaded them.
+    Unlike /api/models (the raw config file), each entry carries fppd's own
+    computed "width"/"height", which already account for Orientation and
+    StrandsPerString. Read-only and best-effort: {} on any failure, callers
+    fall back to model_geometry()'s own math."""
+    try:
+        r = requests.get(_api(base_url, "/api/overlays/models"), timeout=TIMEOUT)
+        r.raise_for_status()
+        data = r.json()
+    except (requests.RequestException, ValueError):
+        return {}
+    return {m.get("Name"): m for m in data if isinstance(m, dict)} if isinstance(data, list) else {}
+
+
+def get_panel_outputs(base_url: str) -> list:
+    """Every LED panel matrix configured under Input/Output Setup -> LED
+    Panels, from GET /api/channel/output/channelOutputsJSON. Returns
+    [{"name", "start_channel", "channel_count", "width", "height"}].
+    Best-effort: [] on failure (e.g. a box with no panel outputs at all)."""
+    try:
+        r = requests.get(_api(base_url, "/api/channel/output/channelOutputsJSON"), timeout=TIMEOUT)
+        r.raise_for_status()
+        data = r.json()
+    except (requests.RequestException, ValueError):
+        return []
+    outputs = data.get("channelOutputs", []) if isinstance(data, dict) else []
+    panels = []
+    for o in outputs:
+        if not isinstance(o, dict) or o.get("type") != "LEDPanelMatrix" or not o.get("enabled", 1):
+            continue
+        pw, ph = int(o.get("panelWidth") or 0), int(o.get("panelHeight") or 0)
+        cols, rows = int(o.get("LEDPanelCols") or 0), int(o.get("LEDPanelRows") or 0)
+        panels.append({
+            "name": o.get("LEDPanelMatrixName") or "LEDPanels",
+            "start_channel": int(o.get("startChannel") or 1),
+            "channel_count": int(o.get("channelCount") or 0),
+            "width": pw * cols,
+            "height": ph * rows,
+        })
+    return panels
+
+
+def model_geometry(model: dict, live: dict = None) -> tuple:
+    """(width, height) in pixels, the way fppd sees the model.
+
+    Prefers fppd's own numbers from /api/overlays/models. Otherwise mirrors
+    PixelOverlayModel's constructor: a Channel model is StringCount *
+    StrandsPerString rows tall (columns, if Orientation is vertical); any
+    other type (Sub, FB) uses its Width/Height fields. The original code
+    assumed every matrix was horizontal with one strand per string, which
+    is true of LED panels but not of most traditional pixel matrices
+    (vertical zig-zag strings are the norm there)."""
+    lm = (live or {}).get(model.get("Name")) or {}
+    if lm.get("width") and lm.get("height"):
+        return int(lm["width"]), int(lm["height"])
+    if model.get("Type", "Channel") != "Channel":
+        return int(model.get("Width", 0) or 0), int(model.get("Height", 0) or 0)
+    cpn = int(model.get("ChannelCountPerNode", 3) or 3)
+    lines = int(model.get("StringCount", 0) or 0) * max(int(model.get("StrandsPerString", 1) or 1), 1)
+    if lines <= 0:
+        return 0, 0
+    per_line = int(model.get("ChannelCount", 0) or 0) // cpn // lines
+    if str(model.get("Orientation", "horizontal")).lower().startswith("v"):
+        return lines, per_line
+    return per_line, lines
+
+
+def rows_are_contiguous(model: dict) -> bool:
+    """True if each pixel row of `model` is one contiguous channel run, top
+    row first -- i.e. a horizontal, top-left-start, single-strand Channel
+    model (every LED panel matrix FPP auto-creates). Only then can a zone be
+    a plain Channel model covering "the top N rows". Anything else (vertical
+    strings, zig-zag, bottom/right start) gets Sub-model zones instead."""
+    return (
+        model.get("Type", "Channel") == "Channel"
+        and str(model.get("Orientation", "horizontal")).lower().startswith("h")
+        and str(model.get("StartCorner", "TL")).upper() == "TL"
+        and int(model.get("StrandsPerString", 1) or 1) <= 1
+    )
+
+
+def list_matrix_candidates(base_url: str, exclude_names: set) -> dict:
+    """Everything the setup page's matrix picker can offer, tagged so the
+    page can filter client-side:
+
+    - "led_panel":  covers an LED panel matrix output (channel range match).
+                    Per panel output, only the real (non auto-created) models
+                    plus FPP's own auto model of the same name get this tag;
+                    stray duplicates FPP sometimes auto-creates (P5-1, P5-2)
+                    stay show-all-only.
+    - "name_match": "matrix" appears in the model name (case-insensitive).
+    Untagged models only appear with "Show all models" checked.
+
+    An LED panel output with no model at all (autoCreate turned off) is
+    listed with "missing_model": true; provisioning creates one for it.
+    """
+    try:
+        models = get_models(base_url)
+    except requests.RequestException as exc:
+        return {"ok": False, "message": f"Could not reach FPP's API at {base_url}: {exc}", "candidates": []}
+    live = get_live_models(base_url)
+    panels = get_panel_outputs(base_url)
+
+    candidates = []
+    covered_panels = set()
+    for m in models:
+        name = m.get("Name")
+        if not name or name in exclude_names:
+            continue
+        w, h = model_geometry(m, live)
+        tags = []
+        start, count = m.get("StartChannel"), m.get("ChannelCount")
+        for p in panels:
+            if m.get("Type", "Channel") == "Channel" and start == p["start_channel"] and count == p["channel_count"]:
+                if not m.get("autoCreated") or name == p["name"]:
+                    tags.append("led_panel")
+                    covered_panels.add(p["name"])
+                break
+        if "matrix" in name.lower():
+            tags.append("name_match")
+        candidates.append({
+            "name": name, "width": w, "height": h, "tags": tags,
+            "type": m.get("Type", "Channel"),
+            "auto_created": bool(m.get("autoCreated")),
+            "orientation": m.get("Orientation", ""),
+            "start_corner": m.get("StartCorner", ""),
+            "strands_per_string": m.get("StrandsPerString", 1),
+            "zone_type": "Channel" if rows_are_contiguous(m) else "Sub",
+            "missing_model": False,
+        })
+    for p in panels:
+        if p["name"] not in covered_panels and not any(c["name"] == p["name"] for c in candidates):
+            candidates.append({
+                "name": p["name"], "width": p["width"], "height": p["height"], "tags": ["led_panel"],
+                "type": "Channel", "auto_created": False, "orientation": "horizontal", "start_corner": "TL",
+                "strands_per_string": 1, "zone_type": "Channel", "missing_model": True,
+            })
+    return {"ok": True, "message": "", "candidates": candidates}
+
+
+def _panel_model_payload(panel: dict) -> dict:
+    """The same model FPP auto-creates for an LED panel output, for boxes
+    where overlay autoCreate is off and the panel has no model to attach to."""
+    return {
+        "Name": panel["name"], "Type": "Channel",
+        "StartChannel": panel["start_channel"], "ChannelCount": panel["channel_count"],
+        "ChannelCountPerNode": 3, "StringCount": panel["height"], "StrandsPerString": 1,
+        "Orientation": "horizontal", "StartCorner": "TL", "xLights": False,
+    }
+
+
 def get_overlay_settings(base_url: str) -> dict:
     """GET /api/overlays/settings -> {"autoCreate": bool}. Fetched so
     save_models()'s full-file rewrite can carry this flag forward
@@ -147,6 +304,32 @@ def _model_payload(name: str, start_channel: int, width: int, height: int) -> di
     }
 
 
+def _sub_model_payload(name: str, parent: str, y_offset: int, width: int, height: int) -> dict:
+    """A zone as an FPP "Sub" model (FPP 9.0+): a width x height window at
+    (0, y_offset) of `parent`, in the parent's own pixel coordinates. fppd
+    maps it through the parent's wiring, so it works on any matrix --
+    vertical, zig-zag, any start corner. Orientation/StartCorner/StringCount
+    are filler fppd overwrites for non-Channel types, but FPP 9.0 indexes
+    StartCorner unconditionally, so they must be present."""
+    return {
+        "Name": name,
+        "Type": "Sub",
+        "Parent": parent,
+        "XOffset": 0,
+        "YOffset": y_offset,
+        "Width": width,
+        "Height": height,
+        "StartChannel": 1,
+        "ChannelCount": width * height * 3,
+        "ChannelCountPerNode": 3,
+        "StringCount": height,
+        "StrandsPerString": 1,
+        "Orientation": "horizontal",
+        "StartCorner": "TL",
+        "xLights": False,
+    }
+
+
 def get_playlists(base_url: str) -> list:
     r = requests.get(_api(base_url, "/api/playlists"), timeout=TIMEOUT)
     r.raise_for_status()
@@ -174,8 +357,10 @@ def save_playlist(base_url: str, name: str, script_name: str) -> None:
     r.raise_for_status()
 
 
-def _find_main_matrix_model(models: list, exclude_names: set) -> dict:
-    """Heuristic: the main display is the largest-channel-count 'Channel'
+def _find_main_matrix_model(models: list, exclude_names: set, preferred: str = "") -> dict:
+    """If `preferred` (settings.matrix_model, chosen in the setup page's
+    matrix picker) names an existing model, that's the matrix. Otherwise,
+    heuristic: the main display is the largest-channel-count 'Channel'
     type model that isn't one of our own overlay zones. On a dedicated
     single-purpose FPP box (the common case for this plugin) that's
     reliably the one real matrix output.
@@ -191,6 +376,10 @@ def _find_main_matrix_model(models: list, exclude_names: set) -> dict:
     models are always deprioritized so zones get sized off the customer's
     actual model.
     """
+    if preferred:
+        for m in models:
+            if m.get("Name") == preferred and preferred not in exclude_names:
+                return m
     candidates = [
         m for m in models
         if m.get("Type") == "Channel" and m.get("Name") not in exclude_names
@@ -216,24 +405,45 @@ def _zone_starts(main: dict, width: int, photo_h: int, cpn: int = 3) -> tuple:
 
 
 def _zones_misplaced(main: dict, photo: dict, ticker: dict) -> bool:
-    """True if either zone falls outside the main matrix model's channels."""
+    """True if either zone isn't drawing onto the main matrix correctly:
+    - Sub zones must have the main matrix as their Parent.
+    - Channel zones must sit inside the matrix's channel range AND the
+      matrix's rows must be contiguous channel runs -- a Channel zone on a
+      vertical / zig-zag matrix lands on the right channels but in the
+      wrong pixel order (scrambled photo)."""
     if not main:
         return False
     lo = main.get("StartChannel", 0)
     hi = lo + main.get("ChannelCount", 0)  # exclusive
     for z in (photo, ticker):
+        if z.get("Type") == "Sub":
+            if z.get("Parent") != main.get("Name"):
+                return True
+            continue
+        if not rows_are_contiguous(main):
+            return True
         start = z.get("StartChannel", 0)
         if start < lo or start + z.get("ChannelCount", 0) > hi:
             return True
     return False
 
 
-def provision(settings: Settings, force_recreate: bool = False, dry_run: bool = False) -> dict:
+def provision(settings: Settings, force_recreate: bool = False, dry_run: bool = False,
+              matrix_model: str = None) -> dict:
+    """matrix_model: the matrix chosen in the setup page's picker (None =
+    keep settings.matrix_model). An explicit pick that the existing zones
+    aren't drawing onto rebuilds them automatically -- choosing a matrix
+    and clicking "Re-run zone setup" is all a user should have to do."""
     base_url = settings.fpp_base_url
     photo_name = settings.photo_model
     ticker_name = settings.ticker_model
     playlist_name = settings.playlist
     script_name = "nnl_display_image.py"
+    zone_names = {photo_name, ticker_name}
+
+    explicit_pick = matrix_model is not None
+    if explicit_pick:
+        settings.matrix_model = matrix_model.strip()
 
     result = {
         "ok": False,
@@ -241,6 +451,8 @@ def provision(settings: Settings, force_recreate: bool = False, dry_run: bool = 
         "created_models": [],
         "synced_from_existing": False,
         "playlist_created": False,
+        "matrix_model": settings.matrix_model,
+        "zone_type": None,
         "matrix_width": settings.matrix_width,
         "matrix_height": settings.matrix_height,
         "photo_zone_height": settings.photo_zone_height,
@@ -255,6 +467,7 @@ def provision(settings: Settings, force_recreate: bool = False, dry_run: bool = 
         return result
 
     auto_create = get_overlay_settings(base_url).get("autoCreate")
+    live = get_live_models(base_url)
 
     by_name = {m.get("Name"): m for m in models}
     have_photo = photo_name in by_name
@@ -265,33 +478,62 @@ def provision(settings: Settings, force_recreate: bool = False, dry_run: bool = 
     # since that endpoint replaces the whole file rather than appending to
     # it (see module docstring). This includes the customer's own real
     # matrix model and anything else they've configured.
-    other_models = [m for m in models if m.get("Name") not in (photo_name, ticker_name)]
+    other_models = [m for m in models if m.get("Name") not in zone_names]
+
+    # An LED panel output picked in the picker that has no model yet (FPP's
+    # overlay autoCreate is off): add the same model FPP would auto-create.
+    added_models = []
+    if settings.matrix_model and settings.matrix_model not in by_name:
+        panel = next((p for p in get_panel_outputs(base_url) if p["name"] == settings.matrix_model), None)
+        if panel:
+            pm = _panel_model_payload(panel)
+            other_models.append(pm)
+            added_models.append(pm["Name"])
+        elif explicit_pick:
+            result["message"] = (f"Matrix model '{settings.matrix_model}' was not found on FPP — "
+                                 f"pick another one from the list.")
+            return result
+
+    main = _find_main_matrix_model(other_models, exclude_names=zone_names, preferred=settings.matrix_model)
+    if settings.matrix_model and main and main.get("Name") != settings.matrix_model:
+        result["message"] = (f"Matrix model '{settings.matrix_model}' was not found on FPP — "
+                             f"pick another one from the list.")
+        return result
+
+    if have_photo and have_ticker and not force_recreate and explicit_pick and \
+            _zones_misplaced(main, by_name[photo_name], by_name[ticker_name]):
+        # The user picked a different matrix than the zones are on.
+        force_recreate = True
+        result["rebuilt_for_new_matrix"] = True
 
     if force_recreate:
         have_photo = have_ticker = False
 
-    if have_photo and have_ticker:
+    if have_photo and have_ticker and not added_models:
         # Existing models on FPP are the source of truth — sync settings.json
         # to match rather than touching them. This is what makes a manual
         # resize in FPP's own Pixel Overlay Models editor + "Re-run zone
         # setup" actually pick up the change. No /api/models write needed.
         photo = by_name[photo_name]
         ticker = by_name[ticker_name]
-        photo_h = photo.get("StringCount", settings.photo_zone_height)
-        ticker_h = ticker.get("StringCount", settings.ticker_zone_height)
-        cpn = photo.get("ChannelCountPerNode", 3) or 3
-        width = photo.get("ChannelCount", 0) // max(photo_h, 1) // cpn if photo_h else settings.matrix_width
+        pw, photo_h = model_geometry(photo, live)
+        _tw, ticker_h = model_geometry(ticker, live)
+        photo_h = photo_h or settings.photo_zone_height
+        ticker_h = ticker_h or settings.ticker_zone_height
 
-        settings.matrix_width = width or settings.matrix_width
+        settings.matrix_width = pw or settings.matrix_width
         settings.photo_zone_height = photo_h
         settings.ticker_zone_height = ticker_h
         settings.matrix_height = photo_h + ticker_h
-        main = _find_main_matrix_model(other_models, exclude_names={photo_name, ticker_name})
+        if main and not settings.matrix_model:
+            settings.matrix_model = main.get("Name", "")
         misplaced = _zones_misplaced(main, photo, ticker)
         result.update({
             "ok": not misplaced,
             "zones_misplaced": misplaced,
             "synced_from_existing": True,
+            "matrix_model": settings.matrix_model,
+            "zone_type": photo.get("Type", "Channel"),
             "matrix_width": settings.matrix_width,
             "matrix_height": settings.matrix_height,
             "photo_zone_height": settings.photo_zone_height,
@@ -301,13 +543,12 @@ def provision(settings: Settings, force_recreate: bool = False, dry_run: bool = 
         })
         if misplaced:
             result["message"] += (
-                f" PROBLEM: {photo_name}/{ticker_name} are not on the channels of your matrix model "
-                f"'{main.get('Name')}' (channels {main.get('StartChannel')}-"
-                f"{main.get('StartChannel', 0) + main.get('ChannelCount', 0) - 1}), so nothing they draw "
-                f"reaches the panels. Re-run zone setup with \"Full reset\" checked to fix."
+                f" PROBLEM: {photo_name}/{ticker_name} don't line up with your matrix model "
+                f"'{main.get('Name')}' (wrong channels, wrong parent, or Channel-type zones on a matrix "
+                f"whose rows aren't wired as contiguous runs), so the picture won't land right. "
+                f"Re-run zone setup with \"Full reset\" checked to fix."
             )
     else:
-        main = _find_main_matrix_model(other_models, exclude_names={photo_name, ticker_name})
         if not main:
             result["message"] = (
                 "No existing channel output/model found to size the zones from. "
@@ -316,10 +557,7 @@ def provision(settings: Settings, force_recreate: bool = False, dry_run: bool = 
             )
             return result
 
-        cpn = main.get("ChannelCountPerNode", 3) or 3
-        total_height = main.get("StringCount", 0)
-        total_width = main.get("ChannelCount", 0) // max(total_height, 1) // cpn
-
+        total_width, total_height = model_geometry(main, live)
         if not total_height or not total_width:
             result["message"] = f"Could not determine matrix dimensions from model '{main.get('Name')}'."
             return result
@@ -327,60 +565,66 @@ def provision(settings: Settings, force_recreate: bool = False, dry_run: bool = 
         photo_h = max(1, round(total_height * _PHOTO_RATIO))
         ticker_h = max(1, total_height - photo_h)
 
-        new_models = []
-        # Zones overlay the main matrix's own channels (see _zone_starts);
-        # every other existing model is preserved untouched.
-        final_models = list(other_models)
+        # LED panels (and any horizontal, top-left, single-strand matrix):
+        # each row is a contiguous channel run, so zones are plain Channel
+        # models on the matrix's own channels -- the layout proven on the
+        # P5 since phase 1. Anything else (traditional pixel matrices are
+        # usually vertical zig-zag) gets Sub models that FPP maps through
+        # the matrix's wiring.
+        use_sub = not rows_are_contiguous(main)
+        zone_type = "Sub" if use_sub else "Channel"
 
+        new_models = []
+        final_models = list(other_models)
+        cpn = main.get("ChannelCountPerNode", 3) or 3
         photo_start, ticker_start = _zone_starts(main, total_width, photo_h, cpn)
 
         if have_photo:
             final_models.append(by_name[photo_name])
         else:
-            photo_entry = _model_payload(photo_name, photo_start, total_width, photo_h)
+            photo_entry = (_sub_model_payload(photo_name, main["Name"], 0, total_width, photo_h) if use_sub
+                           else _model_payload(photo_name, photo_start, total_width, photo_h))
             new_models.append(photo_entry)
             final_models.append(photo_entry)
 
         if have_ticker:
             final_models.append(by_name[ticker_name])
         else:
-            ticker_entry = _model_payload(ticker_name, ticker_start, total_width, ticker_h)
+            ticker_entry = (_sub_model_payload(ticker_name, main["Name"], photo_h, total_width, ticker_h) if use_sub
+                            else _model_payload(ticker_name, ticker_start, total_width, ticker_h))
             new_models.append(ticker_entry)
             final_models.append(ticker_entry)
 
-        if new_models:
-            created_names = [m["Name"] for m in new_models]
+        created_names = added_models + [m["Name"] for m in new_models]
+        if created_names:
+            desc = (f"Detected matrix '{main.get('Name')}' as {total_width}x{total_height} "
+                    f"({zone_type}-type zones)")
             if dry_run:
                 result["would_post"] = {"models": final_models, "autoCreate": auto_create}
                 result["created_models"] = created_names
-                result["message"] = (
-                    f"[DRY RUN] Detected matrix as {total_width}x{total_height} from model "
-                    f"'{main.get('Name')}' — would create {', '.join(created_names)} alongside "
-                    f"{len(other_models)} existing model(s). Nothing was written."
-                )
+                result["message"] = (f"[DRY RUN] {desc} — would create {', '.join(created_names)} alongside "
+                                     f"{len(other_models) - len(added_models)} existing model(s). Nothing was written.")
             else:
                 try:
                     save_models(base_url, final_models, auto_create=auto_create)
                     result["created_models"] = created_names
                 except requests.RequestException as exc:
-                    result["message"] = (
-                        f"Detected matrix as {total_width}x{total_height} but failed creating models: {exc}"
-                    )
+                    result["message"] = f"{desc} but failed creating models: {exc}"
                     return result
-                result["message"] = (
-                    f"Detected matrix as {total_width}x{total_height} from model "
-                    f"'{main.get('Name')}' — created {', '.join(created_names)} "
-                    f"(preserved {len(other_models)} existing model(s))."
-                )
+                result["message"] = (f"{desc} — created {', '.join(created_names)} "
+                                     f"(preserved {len(other_models) - len(added_models)} existing model(s)).")
         else:
             result["message"] = "PhotoZone/TickerZone already present — nothing to create."
 
+        settings.matrix_model = main.get("Name", "")
         settings.matrix_width = total_width
         settings.matrix_height = total_height
         settings.photo_zone_height = photo_h
         settings.ticker_zone_height = ticker_h
         result.update({
             "ok": True,
+            "matrix_model": settings.matrix_model,
+            "zone_type": zone_type,
             "matrix_width": total_width,
             "matrix_height": total_height,
             "photo_zone_height": photo_h,
@@ -424,10 +668,21 @@ def main() -> int:
                               "Recommended before running against any box you can't afford to "
                               "break — see the module docstring for why POST /api/models is "
                               "destructive if not done carefully.")
+    parser.add_argument("--matrix-model", default=None,
+                         help="Name of the FPP model that is your matrix (as chosen in the setup page's "
+                              "picker). Zones are rebuilt onto it if they aren't on it already.")
+    parser.add_argument("--list-models", action="store_true",
+                         help="Print matrix picker candidates as JSON and exit. Read-only.")
     args = parser.parse_args()
 
     settings = load_settings()
-    result = provision(settings, force_recreate=args.force_recreate, dry_run=args.dry_run)
+    if args.list_models:
+        out = list_matrix_candidates(settings.fpp_base_url, {settings.photo_model, settings.ticker_model})
+        out["selected"] = settings.matrix_model
+        print(json.dumps(out))
+        return 0 if out["ok"] else 1
+    result = provision(settings, force_recreate=args.force_recreate, dry_run=args.dry_run,
+                       matrix_model=args.matrix_model)
 
     if not args.dry_run:
         write_status(last_provision=result)

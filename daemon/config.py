@@ -38,6 +38,10 @@ SCALAR_DEFAULTS = {
     "playlist": "breaking_news",
     "ticker_model": "TickerZone",
     "photo_model": "PhotoZone",
+    # FPP model the zones overlay — chosen in the setup page's matrix picker
+    # (LED panel matrices + models with "matrix" in the name, or any model
+    # with "Show all models"). "" = auto-detect (largest Channel model).
+    "matrix_model": "",
     "matrix_width": 192,
     "matrix_height": 192,
     "photo_zone_height": 140,
@@ -60,6 +64,7 @@ class Settings:
     playlist: str = "breaking_news"
     ticker_model: str = "TickerZone"
     photo_model: str = "PhotoZone"
+    matrix_model: str = ""
     matrix_width: int = 192
     matrix_height: int = 192
     photo_zone_height: int = 140

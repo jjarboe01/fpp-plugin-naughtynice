@@ -99,12 +99,30 @@ leave `environment` alone.
 plugin is ready to run right after install — no hand-building Pixel Overlay
 Models or a playlist first:
 
-- Finds your existing matrix's channel-output model (the largest-channel
-  "Channel" type model not already named PhotoZone/TickerZone), derives its
-  pixel width/height, and appends two new Pixel Overlay Models —
-  `PhotoZone` and `TickerZone` — right after your existing channels. The
-  photo/ticker split matches phase 1's proven ratio (~73%/27%) scaled to
-  your matrix's actual height.
+- Uses the matrix you pick on the setup page (**Matrix to show submissions
+  on**), or on first install auto-detects it (the largest-channel
+  "Channel" type model not named PhotoZone/TickerZone). The picker lists
+  every **LED panel matrix** (from Input/Output Setup -> LED Panels) plus
+  every model with **"matrix" in its name**; tick **Show all models** if
+  yours is named something else.
+- Derives the matrix's real pixel width/height (honoring Orientation and
+  StrandsPerString), then creates two Pixel Overlay Models — `PhotoZone`
+  (top ~73%) and `TickerZone` (bottom ~27%) — on that matrix:
+  - **LED panels / horizontal top-left single-strand matrices:** plain
+    Channel models on the matrix's own channel range (each pixel row is a
+    contiguous run of channels).
+  - **Traditional pixel matrices** (vertical strings, zig-zag, any other
+    start corner): FPP **Sub** models of the matrix (`Parent` +
+    `XOffset`/`YOffset`, FPP 9.0+). Rows there aren't contiguous channel
+    runs, so a Channel-type zone would land on the right channels in the
+    wrong order; Sub models let fppd map the zone through the matrix's
+    own wiring.
+- Picking a different matrix and clicking **Re-run zone setup** rebuilds
+  the zones onto it automatically (dry run first to preview). An LED panel
+  output with no model at all (overlay autoCreate off) gets the same model
+  FPP would auto-create.
+- `python3 daemon/fpp_provision.py --list-models` prints the picker's
+  candidates as JSON (read-only).
 - Creates a `breaking_news` playlist with a single **script** entry
   pointing at `nnl_display_image.py` (deployed to
   `/home/fpp/media/scripts/` by `fpp_install.sh`). Holds the display for

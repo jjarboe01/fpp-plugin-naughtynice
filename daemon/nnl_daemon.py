@@ -131,6 +131,7 @@ def run() -> None:
         fpp = FPPClient(
             settings.fpp_base_url, settings.ticker_model, settings.playlist,
             matrix_width=settings.matrix_width, photo_zone_height=settings.photo_zone_height,
+            ticker_zone_height=settings.ticker_zone_height,
         )
 
         try:
