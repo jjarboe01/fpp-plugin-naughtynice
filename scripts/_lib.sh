@@ -12,7 +12,9 @@ DATA_DIR=/home/fpp/media/plugindata/fpp-plugin-naughtynice
 # set +u keep sourcing it from aborting a set -e/-u caller.
 LOGDIR=$( ( set +u; . "${FPPDIR:-/opt/fpp}/scripts/common" >/dev/null 2>&1 && getSetting logDirectory ) 2>/dev/null || true )
 [ -n "$LOGDIR" ] || LOGDIR=/home/fpp/media/logs
-LOGFILE="${LOGDIR}/fpp-plugin-naughtynice.log"
+# FPP guideline §1.1: exactly one log, named plugin-<repoName>.log -- the
+# plugin- prefix is what FPP's logrotate and log viewer key on.
+LOGFILE="${LOGDIR}/plugin-fpp-plugin-naughtynice.log"
 
 nnl_signal() {
     local sig="$1" pid="$2"
