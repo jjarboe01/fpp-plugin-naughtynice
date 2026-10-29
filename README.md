@@ -50,7 +50,7 @@ fppd's config in place — it does **not** re-run `preStart.sh`/`postStart.sh`
 fppd's own process tree) is never touched, even though fppd itself shows a
 fresh uptime immediately after. This showed up as: plugin files updated to
 a new version on disk, FPPD uptime freshly reset, but the daemon's own log
-(`logs/fpp-plugin-naughtynice.log`) showing no new "Starting
+(`logs/plugin-fpp-plugin-naughtynice.log`) showing no new "Starting
 NaughtyNice Cloud plugin daemon" line at all — the old process was simply
 never replaced. Only a full stop/start of fppd (no `quick` flag) or a full
 Pi reboot actually re-invokes the plugin hooks and picks up new code.
