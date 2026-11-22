@@ -349,7 +349,9 @@ class FPPClient:
             _draw_text_centered(draw, status_text, font_status, badge_x, lower_y, w - 1, lower_y + _LOWER_H, _COLOR_WHITE)
 
         except Exception as exc:
-            log.error("push_photo_overlay image processing error: %s", exc)
+            # Type only: the message can include part of the child's name
+            # (e.g. a UnicodeEncodeError from drawing it).
+            log.error("push_photo_overlay image processing error (%s)", type(exc).__name__)
             return False
 
         # Write atomically (tmp + rename) so the display script never reads

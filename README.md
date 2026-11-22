@@ -74,7 +74,7 @@ The setup page has two credential slots — **Production** and
 **Development** — each with its own cloud service URL and show token,
 defaulted to `https://naughtynicefpp.com` and `https://dev.naughtynicefpp.com`.
 A radio button picks which one the daemon actually polls (`environment` in
-`config/settings.json`). Both slots are always saved, so flipping back and
+`settings.json`). Both slots are always saved, so flipping back and
 forth for plugin/server testing never requires re-pasting a token. Both
 the setup page and the status page show a colored **ACTIVE ENVIRONMENT**
 banner (green prod, orange dev) so it's obvious at a glance which one is
@@ -244,8 +244,10 @@ plugin), also do the following before reinstalling:
   `fpp_version` and shown on both the plugin's own status page and the
   cloud admin Shows page — support/troubleshooting info, not used for any
   compatibility gating.
-- Settings and status live in `config/settings.json` / `config/status.json`
-  — plain JSON shared between the Python daemon and the PHP UI pages
+- Settings live in `/home/fpp/media/plugindata/fpp-plugin-naughtynice/settings.json`
+  (mode 0600, owned by fpp — it holds the show tokens; pre-0.4.0 installs
+  kept it in `config/` and postStart.sh moves it) and status in
+  `config/status.json` — plain JSON shared between the Python daemon and the PHP UI pages
   (`content.php`, `status.php`), deliberately not using FPP's native
   `plugin.<name>` ini settings format. See `lib/config.php` for why.
 

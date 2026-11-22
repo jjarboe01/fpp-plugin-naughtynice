@@ -83,6 +83,9 @@ class Settings:
     ticker_zone_height: int = 52
     display_duration_seconds: int = 20
     enabled: bool = True
+    # Zone models this plugin created itself (fpp_provision.py) -- the only
+    # models uninstall may remove. Adopted/hand-built models never go here.
+    owned_models: list = field(default_factory=list)
 
     @property
     def cloud_base_url(self) -> str:
@@ -139,6 +142,9 @@ def load_settings() -> Settings:
     if data["environment"] not in ENVIRONMENTS:
         data["environment"] = "prod"
 
+    owned = raw.get("owned_models")
+    data["owned_models"] = [n for n in owned if isinstance(n, str)] if isinstance(owned, list) else []
+
     return Settings(**data)
 
 
@@ -147,7 +153,7 @@ def save_settings(settings: Settings) -> None:
     owned by fpp so the setup page can still read it when this runs as root
     (fpp_install.sh's provisioning)."""
     os.makedirs(DATA_DIR, exist_ok=True)
-    tmp_path = SETTINGS_PATH + ".tmp"
+    tmp_path = SETTINGS_PATH + ".py.tmp"
     fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
         json.dump(asdict(settings), f, indent=2)
@@ -159,10 +165,9 @@ def save_settings(settings: Settings) -> None:
         except (KeyError, OSError):
             pass
     os.replace(tmp_path, SETTINGS_PATH)
-    try:
-        os.remove(LEGACY_SETTINGS_PATH)  # the token must not linger in config/
-    except OSError:
-        pass
+    # The legacy config/settings.json is NOT removed here: a pre-0.4.0
+    # daemon still running reads only that file until FPP fully restarts.
+    # postStart.sh removes it once the new daemon takes over.
 
 
 def write_status(**kwargs) -> None:

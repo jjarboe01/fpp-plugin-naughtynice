@@ -34,11 +34,18 @@ SETTINGS="${DATA_DIR}/settings.json"
 LEGACY_SETTINGS="${PLUGIN_DIR}/config/settings.json"
 mkdir -p "$DATA_DIR"
 chown fpp:fpp "$DATA_DIR" 2>/dev/null || true
-if [ -f "$LEGACY_SETTINGS" ] && [ ! -f "$SETTINGS" ]; then
-    mv -f "$LEGACY_SETTINGS" "$SETTINGS"
-elif [ -f "$LEGACY_SETTINGS" ]; then
-    rm -f "$LEGACY_SETTINGS"   # newer copy already in plugindata/
+if [ -f "$LEGACY_SETTINGS" ]; then
+    if [ -f "$SETTINGS" ] && [ "$LEGACY_SETTINGS" -nt "$SETTINGS" ]; then
+        # config/ copy is newer (e.g. saved by an older version after a
+        # downgrade): keep it, but set the plugindata copy aside, not lost.
+        mv -f "$SETTINGS" "${SETTINGS}.bak"
+    fi
+    # -n: never overwrite a plugindata copy the setup page may have just
+    # written; only remove the legacy file once a plugindata copy exists.
+    mv -n "$LEGACY_SETTINGS" "$SETTINGS" 2>/dev/null
+    [ -f "$SETTINGS" ] && rm -f "$LEGACY_SETTINGS"
 fi
+[ -f "${SETTINGS}.bak" ] && chmod 600 "${SETTINGS}.bak"
 if [ -f "$SETTINGS" ]; then
     chown fpp:fpp "$SETTINGS" 2>/dev/null || true
     chmod 600 "$SETTINGS"
@@ -48,9 +55,11 @@ PYTHON_BIN="$(nnl_python)"
 mkdir -p "$(dirname "$LOGFILE")"
 
 # The daemon writes its own log through a WatchedFileHandler (so it follows
-# FPP's rotation of plugin-*.log, §1.2) -- don't hold the file open here.
+# FPP's rotation of plugin-*.log, §1.2). stdout/stderr also go to the log
+# so anything printed before logging is set up (a SyntaxError, a missing
+# interpreter) isn't lost; the daemon itself writes nothing there normally.
 cd "${PLUGIN_DIR}/daemon"
-NNL_LOGFILE="$LOGFILE" nohup "$PYTHON_BIN" nnl_daemon.py > /dev/null 2>&1 < /dev/null &
+NNL_LOGFILE="$LOGFILE" nohup "$PYTHON_BIN" nnl_daemon.py >> "$LOGFILE" 2>&1 < /dev/null &
 echo $! > "$PIDFILE"
 
 #postStart

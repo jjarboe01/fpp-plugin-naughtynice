@@ -26,6 +26,8 @@ fi
 # The display script FPP's playlist runs from its scripts directory is
 # rewritten by postStart.sh on every start, so it goes either way.
 rm -f /home/fpp/media/scripts/nnl_display_image.py
+# A leftover composited photo goes on every uninstall, Reinstall included.
+rm -f "${DATA_DIR}/current_display.png" "${DATA_DIR}/current_display.png.tmp"
 
 if [ "${FPP_PLUGIN_REINSTALL:-0}" != "1" ]; then
     # Remove the PhotoZone/TickerZone models and the plugin-created

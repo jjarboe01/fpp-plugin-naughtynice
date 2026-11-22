@@ -656,6 +656,10 @@ def provision(settings: Settings, force_recreate: bool = False, dry_run: bool = 
                 try:
                     save_models(base_url, final_models, auto_create=auto_create)
                     result["created_models"] = created_names
+                    # Record the zones we just created, so uninstall removes
+                    # exactly these and never an adopted/hand-built model.
+                    settings.owned_models = sorted(
+                        set(settings.owned_models or []) | {m["Name"] for m in new_models})
                 except requests.RequestException as exc:
                     result["message"] = f"{desc} but failed creating models: {exc}"
                     return result
@@ -713,30 +717,45 @@ PLAYLIST_MARKER = "Auto-created by the NaughtyNice Cloud plugin"
 
 
 def remove_artifacts(settings: Settings) -> dict:
-    """Undo what this plugin creates inside FPP (guideline §2.1), for a real
-    uninstall: the PhotoZone/TickerZone overlay models named in settings,
-    and the breaking-news playlist -- the playlist only if its description
-    still carries PLAYLIST_MARKER, so one the user built themselves is left
-    alone. Never writes anything if the current model list can't be read
-    (POST /api/models replaces the whole file)."""
-    base = settings.fpp_base_url
-    result = {"removed_models": [], "removed_playlist": False, "errors": []}
+    """Undo what this plugin created inside FPP (guideline §2.1), for a real
+    uninstall:
 
-    zone_names = {settings.photo_model, settings.ticker_model} - {""}
-    try:
-        models = get_models(base)
-    except Exception as exc:  # noqa: BLE001
-        result["errors"].append(f"could not read models ({type(exc).__name__}); left them untouched")
-        models = None
-    if models is not None:
-        keep = [m for m in models if m.get("Name") not in zone_names]
-        removed = [m.get("Name") for m in models if m.get("Name") in zone_names]
-        if removed:
-            try:
-                save_models(base, keep, auto_create=get_overlay_settings(base).get("autoCreate"))
-                result["removed_models"] = removed
-            except Exception as exc:  # noqa: BLE001
-                result["errors"].append(f"could not save models ({type(exc).__name__})")
+    - zone models listed in settings.owned_models, i.e. ones a provisioning
+      run actually created -- never a model the plugin merely adopted (a
+      hand-built PhotoZone, or a model the user pointed a setting at), never
+      the matrix model, and never a model another model uses as its Parent;
+    - the breaking-news playlist, only if its description still carries
+      PLAYLIST_MARKER.
+
+    POST /api/models replaces the whole model file, so nothing is written
+    unless both the current model list and the overlay settings (autoCreate)
+    were read successfully."""
+    base = settings.fpp_base_url
+    result = {"removed_models": [], "kept_models": [], "removed_playlist": False, "errors": []}
+
+    owned = set(settings.owned_models or []) - {"", settings.matrix_model}
+    if owned:
+        try:
+            models = get_models(base)
+            r = requests.get(_api(base, "/api/overlays/settings"), timeout=TIMEOUT)
+            r.raise_for_status()
+            overlay = r.json()
+            if not isinstance(models, list) or not isinstance(overlay, dict):
+                raise ValueError("unexpected response")
+        except Exception as exc:  # noqa: BLE001
+            result["errors"].append(f"could not read models ({type(exc).__name__}); left them untouched")
+        else:
+            parents = {m.get("Parent") for m in models if m.get("Name") not in owned and m.get("Parent")}
+            removable = owned - parents
+            result["kept_models"] = sorted(owned & parents)
+            keep = [m for m in models if m.get("Name") not in removable]
+            removed = [m.get("Name") for m in models if m.get("Name") in removable]
+            if removed:
+                try:
+                    save_models(base, keep, auto_create=overlay.get("autoCreate"))
+                    result["removed_models"] = removed
+                except Exception as exc:  # noqa: BLE001
+                    result["errors"].append(f"could not save models ({type(exc).__name__})")
 
     name = settings.playlist
     try:

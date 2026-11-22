@@ -56,7 +56,30 @@ function nnl_default_settings() {
         'ticker_zone_height' => 52,
         'display_duration_seconds' => 20,
         'enabled' => true,
+        // Zone models this plugin created itself (fpp_provision.py) -- the
+        // only models uninstall is allowed to remove.
+        'owned_models' => array(),
     );
+}
+
+// Non-null when a settings file exists but can't be read or parsed. The page
+// would otherwise show defaults (blank tokens), and saving them would
+// overwrite the real file -- so the page shows this and saving is refused.
+function nnl_settings_problem() {
+    $path = file_exists(NNL_SETTINGS_PATH) ? NNL_SETTINGS_PATH
+          : (file_exists(NNL_LEGACY_SETTINGS_PATH) ? NNL_LEGACY_SETTINGS_PATH : null);
+    if ($path === null) {
+        return null;
+    }
+    if (!is_readable($path)) {
+        return "Can't read $path (permissions). Settings were not loaded, and saving is disabled so your " .
+               "tokens aren't overwritten. Fix with: chown fpp:fpp $path && chmod 600 $path";
+    }
+    if (!is_array(json_decode(file_get_contents($path), true))) {
+        return "$path isn't valid JSON. Settings were not loaded, and saving is disabled so it isn't " .
+               "overwritten. Fix or remove the file, then reload this page.";
+    }
+    return null;
 }
 
 function nnl_load_settings() {
@@ -91,6 +114,9 @@ function nnl_load_settings() {
             $settings[$key] = $raw[$key];
         }
     }
+    if (isset($raw['owned_models']) && is_array($raw['owned_models'])) {
+        $settings['owned_models'] = array_values(array_filter($raw['owned_models'], 'is_string'));
+    }
 
     if (isset($raw['environments']) && is_array($raw['environments'])) {
         foreach (NNL_ENVIRONMENT_NAMES as $envName) {
@@ -118,6 +144,10 @@ function nnl_load_settings() {
 // runs as root and left config/ root-owned, so php-fpm (running as the fpp
 // user) couldn't write into it at all.
 function nnl_save_settings($settings) {
+    $problem = nnl_settings_problem();
+    if ($problem !== null) {
+        return array('ok' => false, 'message' => $problem);
+    }
     if (!is_dir(NNL_DATA_DIR)) {
         if (!@mkdir(NNL_DATA_DIR, 0755, true) && !is_dir(NNL_DATA_DIR)) {
             return array('ok' => false, 'message' => "Could not create " . NNL_DATA_DIR . ". Check permissions.");
@@ -131,7 +161,7 @@ function nnl_save_settings($settings) {
 
     // Create the temp file 0600 from the start so the tokens are never
     // briefly world-readable, then rename it into place atomically.
-    $tmp = NNL_SETTINGS_PATH . '.tmp';
+    $tmp = NNL_SETTINGS_PATH . '.php.tmp';
     $oldUmask = umask(0077);
     $written = @file_put_contents($tmp, json_encode($settings, JSON_PRETTY_PRINT));
     umask($oldUmask);
@@ -142,11 +172,9 @@ function nnl_save_settings($settings) {
     if (!@rename($tmp, NNL_SETTINGS_PATH)) {
         return array('ok' => false, 'message' => "Failed to move settings into place at " . NNL_SETTINGS_PATH . ".");
     }
-    // The old copy in config/ holds the token in a place FPP backs up and
-    // bundles -- remove it once the new file is in place.
-    if (file_exists(NNL_LEGACY_SETTINGS_PATH)) {
-        @unlink(NNL_LEGACY_SETTINGS_PATH);
-    }
+    // The old copy in config/ is NOT removed here: a pre-0.4.0 daemon that is
+    // still running reads only that file until FPP fully restarts, and would
+    // go offline. postStart.sh removes it once the new daemon takes over.
     return array('ok' => true, 'message' => null);
 }
 
