@@ -709,6 +709,48 @@ def provision(settings: Settings, force_recreate: bool = False, dry_run: bool = 
     return result
 
 
+PLAYLIST_MARKER = "Auto-created by the NaughtyNice Cloud plugin"
+
+
+def remove_artifacts(settings: Settings) -> dict:
+    """Undo what this plugin creates inside FPP (guideline §2.1), for a real
+    uninstall: the PhotoZone/TickerZone overlay models named in settings,
+    and the breaking-news playlist -- the playlist only if its description
+    still carries PLAYLIST_MARKER, so one the user built themselves is left
+    alone. Never writes anything if the current model list can't be read
+    (POST /api/models replaces the whole file)."""
+    base = settings.fpp_base_url
+    result = {"removed_models": [], "removed_playlist": False, "errors": []}
+
+    zone_names = {settings.photo_model, settings.ticker_model} - {""}
+    try:
+        models = get_models(base)
+    except Exception as exc:  # noqa: BLE001
+        result["errors"].append(f"could not read models ({type(exc).__name__}); left them untouched")
+        models = None
+    if models is not None:
+        keep = [m for m in models if m.get("Name") not in zone_names]
+        removed = [m.get("Name") for m in models if m.get("Name") in zone_names]
+        if removed:
+            try:
+                save_models(base, keep, auto_create=get_overlay_settings(base).get("autoCreate"))
+                result["removed_models"] = removed
+            except Exception as exc:  # noqa: BLE001
+                result["errors"].append(f"could not save models ({type(exc).__name__})")
+
+    name = settings.playlist
+    try:
+        r = requests.get(_api(base, f"/api/playlist/{name}"), timeout=TIMEOUT)
+        if r.status_code == 200 and PLAYLIST_MARKER in str((r.json() or {}).get("desc", "")):
+            d = requests.delete(_api(base, f"/api/playlist/{name}"), timeout=TIMEOUT)
+            result["removed_playlist"] = d.status_code in (200, 204)
+            if not result["removed_playlist"]:
+                result["errors"].append(f"deleting playlist {name} -> HTTP {d.status_code}")
+    except Exception as exc:  # noqa: BLE001
+        result["errors"].append(f"could not check playlist {name} ({type(exc).__name__})")
+    return result
+
+
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [fpp_provision] %(message)s")
     parser = argparse.ArgumentParser(description=__doc__)
@@ -725,9 +767,16 @@ def main() -> int:
                               "picker). Zones are rebuilt onto it if they aren't on it already.")
     parser.add_argument("--list-models", action="store_true",
                          help="Print matrix picker candidates as JSON and exit. Read-only.")
+    parser.add_argument("--uninstall", action="store_true",
+                         help="Remove the zone models and the plugin-created playlist from FPP "
+                              "(run by fpp_uninstall.sh on a real uninstall).")
     args = parser.parse_args()
 
     settings = load_settings()
+    if args.uninstall:
+        out = remove_artifacts(settings)
+        print(json.dumps(out))
+        return 0 if not out["errors"] else 1
     if args.list_models:
         out = list_matrix_candidates(settings.fpp_base_url, {settings.photo_model, settings.ticker_model})
         out["selected"] = settings.matrix_model

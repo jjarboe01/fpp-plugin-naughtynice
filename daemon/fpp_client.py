@@ -417,10 +417,12 @@ class FPPClient:
         }
         try:
             r = requests.post(f"{self.base_url}/api/command", json=payload, timeout=self.timeout)
+            # Never log the message itself: it contains the child's name
+            # (FPP guideline §14.5 -- visitor data stays out of the log).
             if r.status_code in (200, 204):
-                log.info("Ticker text pushed: %s", message.strip())
+                log.info("Ticker text pushed (%s)", status)
                 return True
-            log.error("push_ticker_text -> HTTP %s: %s", r.status_code, r.text[:200])
+            log.error("push_ticker_text -> HTTP %s", r.status_code)
             return False
         except requests.RequestException as exc:
             log.error("push_ticker_text exception: %s", exc)

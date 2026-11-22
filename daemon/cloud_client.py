@@ -3,6 +3,7 @@
 cloud service, never the reverse."""
 
 import logging
+from urllib.parse import urlsplit
 
 import requests
 
@@ -19,6 +20,11 @@ class LicenseExpired(Exception):
 
 class InvalidToken(Exception):
     """Raised when the cloud reports 401 — token is missing/wrong/revoked."""
+
+
+# Photos are small JPEGs (the cloud caps uploads at 5 MB and re-encodes);
+# anything bigger than this isn't one of ours.
+MAX_PHOTO_BYTES = 10 * 1024 * 1024
 
 
 class CloudClient:
@@ -44,11 +50,21 @@ class CloudClient:
             raise CloudApiError(f"{method} {path} -> HTTP {r.status_code}: {r.text[:200]}")
         return r
 
+    def _json(self, method: str, path: str) -> dict:
+        r = self._request(method, path)
+        try:
+            data = r.json()
+        except ValueError as exc:
+            raise CloudApiError(f"{method} {path} returned a non-JSON response") from exc
+        if not isinstance(data, dict):
+            raise CloudApiError(f"{method} {path} returned unexpected JSON")
+        return data
+
     def ping(self) -> dict:
-        return self._request("GET", "/api/v1/ping").json()
+        return self._json("GET", "/api/v1/ping")
 
     def get_queue(self) -> dict:
-        return self._request("GET", "/api/v1/queue").json()
+        return self._json("GET", "/api/v1/queue")
 
     def ack(self, submission_id: int) -> None:
         self._request("POST", f"/api/v1/queue/{submission_id}/ack")
@@ -71,9 +87,37 @@ class CloudClient:
             log.debug("telemetry report failed (non-fatal): %s", exc)
 
     def fetch_photo(self, photo_url: str) -> bytes:
+        """Download a submission photo. The cloud's photo endpoint needs the
+        plugin token, so the request carries it -- which is exactly why it
+        must only ever go to the configured cloud host:
+
+        - the URL's host must be the cloud_base_url host, otherwise refused
+          (the request is rebuilt on cloud_base_url, so it also keeps its
+          https scheme even if the cloud sees itself as plain http behind
+          its proxy);
+        - redirects are not followed, so the token can't be bounced to
+          another host;
+        - the body is capped at MAX_PHOTO_BYTES.
+        """
+        base = urlsplit(self.base_url)
+        url = urlsplit(photo_url)
+        if not url.hostname or url.hostname.lower() != (base.hostname or "").lower():
+            raise CloudApiError("photo URL is not on the configured cloud host -- refused")
+        target = self.base_url + (url.path or "/") + (f"?{url.query}" if url.query else "")
+
         try:
-            r = self._session.get(photo_url, timeout=self.timeout)
-            r.raise_for_status()
-            return r.content
+            with self._session.get(target, timeout=self.timeout, allow_redirects=False, stream=True) as r:
+                if r.status_code != 200:
+                    raise CloudApiError(f"photo download -> HTTP {r.status_code}")
+                declared = r.headers.get("Content-Length")
+                if declared and declared.isdigit() and int(declared) > MAX_PHOTO_BYTES:
+                    raise CloudApiError("photo larger than the size limit -- refused")
+                chunks, total = [], 0
+                for chunk in r.iter_content(64 * 1024):
+                    total += len(chunk)
+                    if total > MAX_PHOTO_BYTES:
+                        raise CloudApiError("photo larger than the size limit -- refused")
+                    chunks.append(chunk)
+                return b"".join(chunks)
         except requests.RequestException as exc:
-            raise CloudApiError(f"fetch_photo {photo_url} failed: {exc}") from exc
+            raise CloudApiError(f"photo download failed: {type(exc).__name__}") from exc
