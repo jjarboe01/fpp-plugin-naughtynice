@@ -10,7 +10,15 @@
 
 define('NNL_PLUGIN_DIR', dirname(__DIR__));
 define('NNL_CONFIG_DIR', NNL_PLUGIN_DIR . '/config');
-define('NNL_SETTINGS_PATH', NNL_CONFIG_DIR . '/settings.json');
+// settings.json holds the show tokens, so it lives in this plugin's
+// plugindata directory, mode 0600, owned by fpp (FPP guidelines §14.4 and
+// §14.11 -- never under config/, which crash bundles and JSON backups
+// copy). Older installs kept it in config/; it's read from there until the
+// next save (or postStart.sh) moves it. status.json has no secrets and
+// stays in config/.
+define('NNL_DATA_DIR', '/home/fpp/media/plugindata/fpp-plugin-naughtynice');
+define('NNL_SETTINGS_PATH', NNL_DATA_DIR . '/settings.json');
+define('NNL_LEGACY_SETTINGS_PATH', NNL_CONFIG_DIR . '/settings.json');
 define('NNL_STATUS_PATH', NNL_CONFIG_DIR . '/status.json');
 
 // Two named environments so you can flip between prod and dev for plugin/
@@ -48,16 +56,40 @@ function nnl_default_settings() {
         'ticker_zone_height' => 52,
         'display_duration_seconds' => 20,
         'enabled' => true,
+        // Zone models this plugin created itself (fpp_provision.py) -- the
+        // only models uninstall is allowed to remove.
+        'owned_models' => array(),
     );
+}
+
+// Non-null when a settings file exists but can't be read or parsed. The page
+// would otherwise show defaults (blank tokens), and saving them would
+// overwrite the real file -- so the page shows this and saving is refused.
+function nnl_settings_problem() {
+    $path = file_exists(NNL_SETTINGS_PATH) ? NNL_SETTINGS_PATH
+          : (file_exists(NNL_LEGACY_SETTINGS_PATH) ? NNL_LEGACY_SETTINGS_PATH : null);
+    if ($path === null) {
+        return null;
+    }
+    if (!is_readable($path)) {
+        return "Can't read $path (permissions). Settings were not loaded, and saving is disabled so your " .
+               "tokens aren't overwritten. Fix with: chown fpp:fpp $path && chmod 600 $path";
+    }
+    if (!is_array(json_decode(file_get_contents($path), true))) {
+        return "$path isn't valid JSON. Settings were not loaded, and saving is disabled so it isn't " .
+               "overwritten. Fix or remove the file, then reload this page.";
+    }
+    return null;
 }
 
 function nnl_load_settings() {
     $settings = nnl_default_settings();
-    if (!file_exists(NNL_SETTINGS_PATH)) {
+    $path = file_exists(NNL_SETTINGS_PATH) ? NNL_SETTINGS_PATH : NNL_LEGACY_SETTINGS_PATH;
+    if (!file_exists($path) || !is_readable($path)) {
         return $settings;
     }
 
-    $raw = json_decode(file_get_contents(NNL_SETTINGS_PATH), true);
+    $raw = json_decode(file_get_contents($path), true);
     if (!is_array($raw)) {
         return $settings;
     }
@@ -81,6 +113,9 @@ function nnl_load_settings() {
         if (isset($raw[$key])) {
             $settings[$key] = $raw[$key];
         }
+    }
+    if (isset($raw['owned_models']) && is_array($raw['owned_models'])) {
+        $settings['owned_models'] = array_values(array_filter($raw['owned_models'], 'is_string'));
     }
 
     if (isset($raw['environments']) && is_array($raw['environments'])) {
@@ -109,24 +144,37 @@ function nnl_load_settings() {
 // runs as root and left config/ root-owned, so php-fpm (running as the fpp
 // user) couldn't write into it at all.
 function nnl_save_settings($settings) {
-    if (!is_dir(NNL_CONFIG_DIR)) {
-        if (!@mkdir(NNL_CONFIG_DIR, 0755, true) && !is_dir(NNL_CONFIG_DIR)) {
-            return array('ok' => false, 'message' => "Could not create config directory (" . NNL_CONFIG_DIR . "). Check permissions.");
+    $problem = nnl_settings_problem();
+    if ($problem !== null) {
+        return array('ok' => false, 'message' => $problem);
+    }
+    if (!is_dir(NNL_DATA_DIR)) {
+        if (!@mkdir(NNL_DATA_DIR, 0755, true) && !is_dir(NNL_DATA_DIR)) {
+            return array('ok' => false, 'message' => "Could not create " . NNL_DATA_DIR . ". Check permissions.");
         }
     }
-    if (!is_writable(NNL_CONFIG_DIR)) {
-        return array('ok' => false, 'message' => "Config directory (" . NNL_CONFIG_DIR . ") is not writable by the web server user. " .
+    if (!is_writable(NNL_DATA_DIR)) {
+        return array('ok' => false, 'message' => NNL_DATA_DIR . " is not writable by the web server user. " .
             "This usually means a plugin lifecycle script ran as root and left it root-owned -- run: " .
-            "chown -R fpp:fpp " . NNL_CONFIG_DIR);
+            "chown -R fpp:fpp " . NNL_DATA_DIR);
     }
 
-    $tmp = NNL_SETTINGS_PATH . '.tmp';
-    if (@file_put_contents($tmp, json_encode($settings, JSON_PRETTY_PRINT)) === false) {
+    // Create the temp file 0600 from the start so the tokens are never
+    // briefly world-readable, then rename it into place atomically.
+    $tmp = NNL_SETTINGS_PATH . '.php.tmp';
+    $oldUmask = umask(0077);
+    $written = @file_put_contents($tmp, json_encode($settings, JSON_PRETTY_PRINT));
+    umask($oldUmask);
+    if ($written === false) {
         return array('ok' => false, 'message' => "Failed to write settings to $tmp. Check disk space and permissions.");
     }
+    @chmod($tmp, 0600);
     if (!@rename($tmp, NNL_SETTINGS_PATH)) {
         return array('ok' => false, 'message' => "Failed to move settings into place at " . NNL_SETTINGS_PATH . ".");
     }
+    // The old copy in config/ is NOT removed here: a pre-0.4.0 daemon that is
+    // still running reads only that file until FPP fully restarts, and would
+    // go offline. postStart.sh removes it once the new daemon takes over.
     return array('ok' => true, 'message' => null);
 }
 
@@ -194,7 +242,6 @@ function nnl_test_connection($settings) {
 // /home/fpp/media/images, where it would show up in FPP's file manager.
 // The display script deletes it as soon as it has been pushed to the
 // overlay buffer; this is the manual "delete now" control (§14.5).
-define('NNL_DATA_DIR', '/home/fpp/media/plugindata/fpp-plugin-naughtynice');
 define('NNL_DISPLAY_IMAGE', NNL_DATA_DIR . '/current_display.png');
 
 function nnl_clear_display_image() {

@@ -349,7 +349,9 @@ class FPPClient:
             _draw_text_centered(draw, status_text, font_status, badge_x, lower_y, w - 1, lower_y + _LOWER_H, _COLOR_WHITE)
 
         except Exception as exc:
-            log.error("push_photo_overlay image processing error: %s", exc)
+            # Type only: the message can include part of the child's name
+            # (e.g. a UnicodeEncodeError from drawing it).
+            log.error("push_photo_overlay image processing error (%s)", type(exc).__name__)
             return False
 
         # Write atomically (tmp + rename) so the display script never reads
@@ -417,10 +419,12 @@ class FPPClient:
         }
         try:
             r = requests.post(f"{self.base_url}/api/command", json=payload, timeout=self.timeout)
+            # Never log the message itself: it contains the child's name
+            # (FPP guideline §14.5 -- visitor data stays out of the log).
             if r.status_code in (200, 204):
-                log.info("Ticker text pushed: %s", message.strip())
+                log.info("Ticker text pushed (%s)", status)
                 return True
-            log.error("push_ticker_text -> HTTP %s: %s", r.status_code, r.text[:200])
+            log.error("push_ticker_text -> HTTP %s", r.status_code)
             return False
         except requests.RequestException as exc:
             log.error("push_ticker_text exception: %s", exc)

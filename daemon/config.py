@@ -1,18 +1,30 @@
 """Reads/writes this plugin's settings and status files.
 
-Both files are plain JSON under <plugin_dir>/config/, shared between the
-Python daemon (this module) and content.php (the FPP UI page). Keeping
-the format dead simple (no dependency on FPP's PHP settings helpers) means
-either side can read/write it without the other.
+Both are plain JSON shared between the Python daemon (this module) and
+content.php (the FPP UI page, via lib/config.php). Keeping the format dead
+simple (no dependency on FPP's PHP settings helpers) means either side can
+read/write it without the other.
+
+- settings.json holds the show tokens, so it lives in
+  /home/fpp/media/plugindata/fpp-plugin-naughtynice/ with mode 0600, owned
+  by fpp (FPP guidelines §14.4/§14.11: credentials never in config/, which
+  FPP's crash bundler and JSON backups copy). The PHP pages run as fpp and
+  the daemon runs as root, so fpp ownership lets both read it. Older
+  installs kept it in <plugin_dir>/config/; it is read from there until
+  postStart.sh / the setup page move it.
+- status.json (no secrets) stays in <plugin_dir>/config/.
 """
 
 import json
 import os
+import pwd
 from dataclasses import asdict, dataclass, field
 
 PLUGIN_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 CONFIG_DIR = os.path.join(PLUGIN_DIR, "config")
-SETTINGS_PATH = os.path.join(CONFIG_DIR, "settings.json")
+DATA_DIR = "/home/fpp/media/plugindata/fpp-plugin-naughtynice"
+SETTINGS_PATH = os.path.join(DATA_DIR, "settings.json")
+LEGACY_SETTINGS_PATH = os.path.join(CONFIG_DIR, "settings.json")  # pre-0.4.0
 STATUS_PATH = os.path.join(CONFIG_DIR, "status.json")
 
 # Two named environments so you can flip between prod and dev for plugin/
@@ -71,6 +83,9 @@ class Settings:
     ticker_zone_height: int = 52
     display_duration_seconds: int = 20
     enabled: bool = True
+    # Zone models this plugin created itself (fpp_provision.py) -- the only
+    # models uninstall may remove. Adopted/hand-built models never go here.
+    owned_models: list = field(default_factory=list)
 
     @property
     def cloud_base_url(self) -> str:
@@ -90,9 +105,10 @@ def load_settings() -> Settings:
     data["environments"] = _default_environments()
 
     raw = {}
-    if os.path.exists(SETTINGS_PATH):
+    path = SETTINGS_PATH if os.path.exists(SETTINGS_PATH) else LEGACY_SETTINGS_PATH
+    if os.path.exists(path):
         try:
-            with open(SETTINGS_PATH) as f:
+            with open(path) as f:
                 raw = json.load(f)
         except (json.JSONDecodeError, OSError):
             raw = {}  # fall back to defaults rather than crash the daemon
@@ -126,13 +142,32 @@ def load_settings() -> Settings:
     if data["environment"] not in ENVIRONMENTS:
         data["environment"] = "prod"
 
+    owned = raw.get("owned_models")
+    data["owned_models"] = [n for n in owned if isinstance(n, str)] if isinstance(owned, list) else []
+
     return Settings(**data)
 
 
 def save_settings(settings: Settings) -> None:
-    os.makedirs(CONFIG_DIR, exist_ok=True)
-    with open(SETTINGS_PATH, "w") as f:
+    """Atomic write, mode 0600 from the start (never briefly world-readable),
+    owned by fpp so the setup page can still read it when this runs as root
+    (fpp_install.sh's provisioning)."""
+    os.makedirs(DATA_DIR, exist_ok=True)
+    tmp_path = SETTINGS_PATH + ".py.tmp"
+    fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
         json.dump(asdict(settings), f, indent=2)
+    os.chmod(tmp_path, 0o600)
+    if os.geteuid() == 0:
+        try:
+            fpp = pwd.getpwnam("fpp")
+            os.chown(tmp_path, fpp.pw_uid, fpp.pw_gid)
+        except (KeyError, OSError):
+            pass
+    os.replace(tmp_path, SETTINGS_PATH)
+    # The legacy config/settings.json is NOT removed here: a pre-0.4.0
+    # daemon still running reads only that file until FPP fully restarts.
+    # postStart.sh removes it once the new daemon takes over.
 
 
 def write_status(**kwargs) -> None:

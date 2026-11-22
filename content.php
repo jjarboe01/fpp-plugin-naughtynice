@@ -108,6 +108,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $nnlSettings = nnl_load_settings();
 $nnlStatus = nnl_read_status();
+$nnlSettingsProblem = nnl_settings_problem();
+if ($nnlSettingsProblem !== null && $nnlMessageClass !== 'nnl-error') {
+    $nnlMessage = $nnlSettingsProblem;
+    $nnlMessageClass = 'nnl-error';
+}
 $nnlActive = nnl_active_env($nnlSettings);
 $actionUrl = htmlspecialchars($_SERVER['REQUEST_URI']);
 
